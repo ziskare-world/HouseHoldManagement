@@ -1,0 +1,8 @@
+<resources>
+    <string name="app_name">RoomieVault</string>
+    <string name="title_expenses">Expenses &amp; Budget</string>
+    <string name="title_chores">Chores &amp; Roster</string>
+    <string name="title_settlements">Splits &amp; UPI Pay</string>
+    <string name="title_analytics">Analytics &amp; Savings</string>
+    <string name="title_household">Household</string>
+</resources>

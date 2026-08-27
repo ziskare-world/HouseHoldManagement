@@ -1,0 +1,6 @@
+{
+  "name": "RoomieVault",
+  "description": "Personal finance & expense manager with automated budget alerts, roommate chore schedules (daily/weekly/monthly rotations), friend debt alerts, UPI payments, and multi-user sync.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
