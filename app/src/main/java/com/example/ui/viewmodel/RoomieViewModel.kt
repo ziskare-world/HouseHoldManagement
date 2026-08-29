@@ -47,6 +47,13 @@ class RoomieViewModel(application: Application) : AndroidViewModel(application) 
     val repository = RoomieRepository.getInstance(application)
     private val context = application.applicationContext
 
+    private val sessionPrefs = application.getSharedPreferences("roomie_session_prefs", android.content.Context.MODE_PRIVATE)
+
+    private val _isLoggedIn = MutableStateFlow(
+        sessionPrefs.getBoolean("is_logged_in", false) || repository.syncManager.authManager.isUserLoggedIn
+    )
+    val isLoggedIn: StateFlow<Boolean> = _isLoggedIn.asStateFlow()
+
     private val _currentTab = MutableStateFlow(ScreenTab.DASHBOARD)
     val currentTab: StateFlow<ScreenTab> = _currentTab.asStateFlow()
 
@@ -63,8 +70,14 @@ class RoomieViewModel(application: Application) : AndroidViewModel(application) 
 
     init {
         ChoreNotificationHelper.createNotificationChannels(context)
+    }
+
+    fun logout() {
         viewModelScope.launch {
-            repository.checkAndSeedInitialData()
+            sessionPrefs.edit().clear().apply()
+            signOutSupabase()
+            _isLoggedIn.value = false
+            _currentTab.value = ScreenTab.DASHBOARD
         }
     }
 
@@ -422,6 +435,8 @@ class RoomieViewModel(application: Application) : AndroidViewModel(application) 
             result.fold(
                 onSuccess = { user ->
                     repository.onSupabaseAuthSuccess(user)
+                    sessionPrefs.edit().putBoolean("is_logged_in", true).apply()
+                    _isLoggedIn.value = true
                     _statusMessage.value = "Welcome ${user.fullName}! Supabase Account Created & Synced."
                     onResult(true, "Account created successfully!")
                 },
@@ -453,6 +468,8 @@ class RoomieViewModel(application: Application) : AndroidViewModel(application) 
             result.fold(
                 onSuccess = { user ->
                     repository.onSupabaseAuthSuccess(user)
+                    sessionPrefs.edit().putBoolean("is_logged_in", true).apply()
+                    _isLoggedIn.value = true
                     _statusMessage.value = "Logged in as ${user.email} (Supabase Cloud Synced)"
                     onResult(true, "Signed in successfully!")
                 },
@@ -569,6 +586,33 @@ class RoomieViewModel(application: Application) : AndroidViewModel(application) 
     fun addRoommate(name: String, email: String, upi: String, color: String) = addVirtualRoommate(name, email, upi, color)
     fun joinHousehold(code: String, name: String) = switchOrJoinHousehold(code, name)
     fun syncWithSupabase() = syncAllWithSupabase()
+
+    fun clearSampleDataAndSetupOriginalHousehold(
+        userName: String,
+        userEmail: String,
+        userUpi: String,
+        householdName: String,
+        householdCode: String,
+        monthlyBudget: Double = 30000.0,
+        onComplete: (() -> Unit)? = null
+    ) {
+        viewModelScope.launch {
+            _syncingState.value = true
+            repository.clearSampleDataAndSetupOriginalHousehold(
+                userName = userName,
+                userEmail = userEmail,
+                userUpi = userUpi,
+                householdName = householdName,
+                householdCode = householdCode,
+                monthlyBudget = monthlyBudget
+            )
+            sessionPrefs.edit().putBoolean("is_logged_in", true).apply()
+            _isLoggedIn.value = true
+            _syncingState.value = false
+            _statusMessage.value = "Sample data cleared! Ready with your original household."
+            onComplete?.invoke()
+        }
+    }
 
     fun getUpiPaymentUri(debt: SettlementDebt): String {
         return UpiPaymentHelper.buildUpiUri(

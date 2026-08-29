@@ -140,4 +140,23 @@ interface RoomieDao {
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertBudgetConfig(config: BudgetConfig)
+
+    // --- Clean Slate & Data Reset ---
+    @Query("DELETE FROM expenses")
+    suspend fun clearAllExpenses()
+
+    @Query("DELETE FROM chore_tasks")
+    suspend fun clearAllChores()
+
+    @Query("DELETE FROM settlement_debts")
+    suspend fun clearAllDebts()
+
+    @Query("DELETE FROM savings_goals")
+    suspend fun clearAllSavingsGoals()
+
+    @Query("DELETE FROM user_profiles")
+    suspend fun clearAllUsers()
+
+    @Query("DELETE FROM households")
+    suspend fun clearAllHouseholds()
 }

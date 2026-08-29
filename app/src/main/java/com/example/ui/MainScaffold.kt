@@ -1,5 +1,6 @@
 package com.example.ui
 
+import androidx.compose.animation.Crossfade
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -15,11 +16,10 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.BarChart
 import androidx.compose.material.icons.filled.CleaningServices
 import androidx.compose.material.icons.filled.Dashboard
-import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.Payment
+import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.ReceiptLong
 import androidx.compose.material3.Badge
 import androidx.compose.material3.BadgedBox
@@ -41,18 +41,17 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.data.local.model.ChoreTask
 import com.example.data.local.model.UserProfile
-import com.example.ui.screens.AnalyticsScreen
 import com.example.ui.screens.ChoresScreen
 import com.example.ui.screens.DashboardScreen
 import com.example.ui.screens.ExpensesScreen
 import com.example.ui.screens.HouseholdProfileScreen
+import com.example.ui.screens.LoginScreen
 import com.example.ui.screens.SettlementsScreen
 import com.example.ui.viewmodel.RoomieViewModel
 import com.example.ui.viewmodel.ScreenTab
@@ -68,8 +67,9 @@ data class NavigationItem(
 @Composable
 fun MainScaffold(
     viewModel: RoomieViewModel,
-    onLaunchUpiPayment: (upiUri: String, packageName: String?) -> Unit
+    onLaunchUpiPayment: (debt: com.example.data.local.model.SettlementDebt, packageName: String?) -> Unit
 ) {
+    val isLoggedIn by viewModel.isLoggedIn.collectAsState()
     val currentTab by viewModel.currentTab.collectAsState()
     val currentUser by viewModel.currentUser.collectAsState()
     val household by viewModel.currentHousehold.collectAsState()
@@ -89,168 +89,186 @@ fun MainScaffold(
         allDebts.count { it.fromUserId == currentUser?.id && it.status != "VERIFIED" }
     }
 
+    // 5 Clean, Focused Navigation Tabs
     val navItems = listOf(
         NavigationItem(ScreenTab.DASHBOARD, "Dashboard", Icons.Default.Dashboard),
         NavigationItem(ScreenTab.EXPENSES, "Expenses", Icons.Default.ReceiptLong),
         NavigationItem(ScreenTab.CHORES, "Chores", Icons.Default.CleaningServices, badgeCount = pendingChoresCount),
         NavigationItem(ScreenTab.SETTLEMENTS, "Splits & UPI", Icons.Default.Payment, badgeCount = pendingDebtsCount),
-        NavigationItem(ScreenTab.ANALYTICS, "Analytics", Icons.Default.BarChart),
-        NavigationItem(ScreenTab.HOUSEHOLD, "Household", Icons.Default.Home)
+        NavigationItem(ScreenTab.HOUSEHOLD, "Profile", Icons.Default.Person)
     )
 
     val snackbarHostState = remember { SnackbarHostState() }
     val scope = rememberCoroutineScope()
 
-    BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
-        val isWideScreen = maxWidth > 680.dp // Adaptive layout for desktop / tablet / foldable
-
-        if (isWideScreen) {
-            // Desktop / Tablet layout: NavigationRail on the left + Content area
-            Row(modifier = Modifier.fillMaxSize()) {
-                NavigationRail(
-                    modifier = Modifier.fillMaxHeight(),
-                    containerColor = MaterialTheme.colorScheme.surface,
-                    header = {
-                        Column(
-                            horizontalAlignment = Alignment.CenterHorizontally,
-                            modifier = Modifier.padding(vertical = 16.dp)
-                        ) {
-                            Box(
-                                modifier = Modifier
-                                    .size(42.dp)
-                                    .clip(CircleShape)
-                                    .background(MaterialTheme.colorScheme.primary),
-                                contentAlignment = Alignment.Center
-                            ) {
-                                Text(
-                                    text = "RV",
-                                    fontWeight = FontWeight.ExtraBold,
-                                    color = MaterialTheme.colorScheme.onPrimary,
-                                    fontSize = 16.sp
-                                )
-                            }
-                            Spacer(modifier = Modifier.height(6.dp))
-                            Text(
-                                text = "RoomieVault",
-                                style = MaterialTheme.typography.labelSmall,
-                                fontWeight = FontWeight.Bold
-                            )
-                        }
-                    }
-                ) {
-                    Spacer(modifier = Modifier.height(12.dp))
-                    navItems.forEach { item ->
-                        val isSelected = currentTab == item.tab
-                        NavigationRailItem(
-                            selected = isSelected,
-                            onClick = { viewModel.setTab(item.tab) },
-                            icon = {
-                                if (item.badgeCount > 0) {
-                                    BadgedBox(
-                                        badge = {
-                                            Badge { Text(item.badgeCount.toString()) }
-                                        }
-                                    ) {
-                                        Icon(imageVector = item.icon, contentDescription = item.title)
-                                    }
-                                } else {
-                                    Icon(imageVector = item.icon, contentDescription = item.title)
-                                }
-                            },
-                            label = { Text(item.title, fontSize = 11.sp) }
-                        )
-                    }
+    Crossfade(targetState = isLoggedIn, label = "AuthGateTransition") { loggedIn ->
+        if (!loggedIn) {
+            // First Screen on Launch: Secure & Modern Login Page
+            LoginScreen(
+                onSignIn = { email, pass, cb ->
+                    viewModel.signInWithSupabase(email, pass, cb)
+                },
+                onSignUp = { email, pass, name, upi, code, hName, cb ->
+                    viewModel.signUpWithSupabase(email, pass, name, upi, code, hName, cb)
+                },
+                onForgotPassword = { email, cb ->
+                    viewModel.resetSupabasePassword(email, cb)
                 }
-
-                // Content Screen
-                Box(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .background(MaterialTheme.colorScheme.background)
-                ) {
-                    RenderScreen(
-                        currentTab = currentTab,
-                        viewModel = viewModel,
-                        currentUser = currentUser,
-                        householdName = household?.name ?: "Roomie Household",
-                        household = household,
-                        householdMembers = householdMembers,
-                        allExpenses = allExpenses,
-                        allChores = allChores,
-                        allDebts = allDebts,
-                        savingsGoals = savingsGoals,
-                        budgetStatus = budgetStatus,
-                        isSyncing = isSyncing,
-                        selectedMonthKey = selectedMonthKey,
-                        onLaunchUpiPayment = onLaunchUpiPayment,
-                        onShowMessage = { msg ->
-                            scope.launch { snackbarHostState.showSnackbar(msg) }
-                        }
-                    )
-                    SnackbarHost(
-                        hostState = snackbarHostState,
-                        modifier = Modifier.align(Alignment.BottomCenter)
-                    )
-                }
-            }
+            )
         } else {
-            // Mobile layout: Standard Bottom Navigation Bar
-            Scaffold(
-                bottomBar = {
-                    NavigationBar(
-                        containerColor = MaterialTheme.colorScheme.surface,
-                        tonalElevation = 6.dp
-                    ) {
-                        navItems.forEach { item ->
-                            val isSelected = currentTab == item.tab
-                            NavigationBarItem(
-                                selected = isSelected,
-                                onClick = { viewModel.setTab(item.tab) },
-                                icon = {
-                                    if (item.badgeCount > 0) {
-                                        BadgedBox(
-                                            badge = {
-                                                Badge { Text(item.badgeCount.toString()) }
+            // Authenticated: Dashboard & All Features
+            BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
+                val isWideScreen = maxWidth > 680.dp
+
+                if (isWideScreen) {
+                    // Desktop / Tablet layout: NavigationRail on the left + Content area
+                    Row(modifier = Modifier.fillMaxSize()) {
+                        NavigationRail(
+                            modifier = Modifier.fillMaxHeight(),
+                            containerColor = MaterialTheme.colorScheme.surface,
+                            header = {
+                                Column(
+                                    horizontalAlignment = Alignment.CenterHorizontally,
+                                    modifier = Modifier.padding(vertical = 16.dp)
+                                ) {
+                                    Box(
+                                        modifier = Modifier
+                                            .size(42.dp)
+                                            .clip(CircleShape)
+                                            .background(MaterialTheme.colorScheme.primary),
+                                        contentAlignment = Alignment.Center
+                                    ) {
+                                        Text(
+                                            text = "RV",
+                                            fontWeight = FontWeight.ExtraBold,
+                                            color = MaterialTheme.colorScheme.onPrimary,
+                                            fontSize = 16.sp
+                                        )
+                                    }
+                                    Spacer(modifier = Modifier.height(6.dp))
+                                    Text(
+                                        text = "RoomieVault",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                }
+                            }
+                        ) {
+                            Spacer(modifier = Modifier.height(12.dp))
+                            navItems.forEach { item ->
+                                val isSelected = currentTab == item.tab
+                                NavigationRailItem(
+                                    selected = isSelected,
+                                    onClick = { viewModel.setTab(item.tab) },
+                                    icon = {
+                                        if (item.badgeCount > 0) {
+                                            BadgedBox(
+                                                badge = {
+                                                    Badge { Text(item.badgeCount.toString()) }
+                                                }
+                                            ) {
+                                                Icon(imageVector = item.icon, contentDescription = item.title)
                                             }
-                                        ) {
+                                        } else {
                                             Icon(imageVector = item.icon, contentDescription = item.title)
                                         }
-                                    } else {
-                                        Icon(imageVector = item.icon, contentDescription = item.title)
-                                    }
-                                },
-                                label = { Text(item.title, maxLines = 1, fontSize = 10.sp) }
+                                    },
+                                    label = { Text(item.title, fontSize = 11.sp) }
+                                )
+                            }
+                        }
+
+                        // Content Screen
+                        Box(
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .background(MaterialTheme.colorScheme.background)
+                        ) {
+                            RenderScreen(
+                                currentTab = currentTab,
+                                viewModel = viewModel,
+                                currentUser = currentUser,
+                                householdName = household?.name ?: "Roomie Household",
+                                household = household,
+                                householdMembers = householdMembers,
+                                allExpenses = allExpenses,
+                                allChores = allChores,
+                                allDebts = allDebts,
+                                savingsGoals = savingsGoals,
+                                budgetStatus = budgetStatus,
+                                isSyncing = isSyncing,
+                                selectedMonthKey = selectedMonthKey,
+                                onLaunchUpiPayment = onLaunchUpiPayment,
+                                onShowMessage = { msg ->
+                                    scope.launch { snackbarHostState.showSnackbar(msg) }
+                                }
+                            )
+                            SnackbarHost(
+                                hostState = snackbarHostState,
+                                modifier = Modifier.align(Alignment.BottomCenter)
                             )
                         }
                     }
-                },
-                snackbarHost = { SnackbarHost(hostState = snackbarHostState) }
-            ) { innerPadding ->
-                Box(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .padding(innerPadding)
-                        .background(MaterialTheme.colorScheme.background)
-                ) {
-                    RenderScreen(
-                        currentTab = currentTab,
-                        viewModel = viewModel,
-                        currentUser = currentUser,
-                        householdName = household?.name ?: "Roomie Household",
-                        household = household,
-                        householdMembers = householdMembers,
-                        allExpenses = allExpenses,
-                        allChores = allChores,
-                        allDebts = allDebts,
-                        savingsGoals = savingsGoals,
-                        budgetStatus = budgetStatus,
-                        isSyncing = isSyncing,
-                        selectedMonthKey = selectedMonthKey,
-                        onLaunchUpiPayment = onLaunchUpiPayment,
-                        onShowMessage = { msg ->
-                            scope.launch { snackbarHostState.showSnackbar(msg) }
+                } else {
+                    // Mobile layout: Standard Bottom Navigation Bar
+                    Scaffold(
+                        bottomBar = {
+                            NavigationBar(
+                                containerColor = MaterialTheme.colorScheme.surface,
+                                tonalElevation = 6.dp
+                            ) {
+                                navItems.forEach { item ->
+                                    val isSelected = currentTab == item.tab
+                                    NavigationBarItem(
+                                        selected = isSelected,
+                                        onClick = { viewModel.setTab(item.tab) },
+                                        icon = {
+                                            if (item.badgeCount > 0) {
+                                                BadgedBox(
+                                                    badge = {
+                                                        Badge { Text(item.badgeCount.toString()) }
+                                                    }
+                                                ) {
+                                                    Icon(imageVector = item.icon, contentDescription = item.title)
+                                                }
+                                            } else {
+                                                Icon(imageVector = item.icon, contentDescription = item.title)
+                                            }
+                                        },
+                                        label = { Text(item.title, maxLines = 1, fontSize = 11.sp, fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal) }
+                                    )
+                                }
+                            }
+                        },
+                        snackbarHost = { SnackbarHost(hostState = snackbarHostState) }
+                    ) { innerPadding ->
+                        Box(
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .padding(innerPadding)
+                                .background(MaterialTheme.colorScheme.background)
+                        ) {
+                            RenderScreen(
+                                currentTab = currentTab,
+                                viewModel = viewModel,
+                                currentUser = currentUser,
+                                householdName = household?.name ?: "Roomie Household",
+                                household = household,
+                                householdMembers = householdMembers,
+                                allExpenses = allExpenses,
+                                allChores = allChores,
+                                allDebts = allDebts,
+                                savingsGoals = savingsGoals,
+                                budgetStatus = budgetStatus,
+                                isSyncing = isSyncing,
+                                selectedMonthKey = selectedMonthKey,
+                                onLaunchUpiPayment = onLaunchUpiPayment,
+                                onShowMessage = { msg ->
+                                    scope.launch { snackbarHostState.showSnackbar(msg) }
+                                }
+                            )
                         }
-                    )
+                    }
                 }
             }
         }
@@ -272,7 +290,7 @@ fun RenderScreen(
     budgetStatus: com.example.ui.viewmodel.BudgetStatus,
     isSyncing: Boolean,
     selectedMonthKey: String,
-    onLaunchUpiPayment: (upiUri: String, packageName: String?) -> Unit,
+    onLaunchUpiPayment: (debt: com.example.data.local.model.SettlementDebt, packageName: String?) -> Unit,
     onShowMessage: (String) -> Unit
 ) {
     val sundayChore = remember(allChores) {
@@ -299,8 +317,7 @@ fun RenderScreen(
                 onQuickGiveMoney = { viewModel.setTab(ScreenTab.SETTLEMENTS) },
                 onToggleChore = { chore -> viewModel.toggleChoreStatus(chore) },
                 onPayDebt = { debt ->
-                    val uri = viewModel.getUpiPaymentUri(debt)
-                    onLaunchUpiPayment(uri, null)
+                    onLaunchUpiPayment(debt, null)
                 },
                 onTriggerSync = {
                     viewModel.syncWithSupabase()
@@ -371,8 +388,7 @@ fun RenderScreen(
                 members = householdMembers,
                 currentUser = currentUser,
                 onPayViaUpi = { debt, preferredApp ->
-                    val uri = viewModel.getUpiPaymentUri(debt)
-                    onLaunchUpiPayment(uri, preferredApp)
+                    onLaunchUpiPayment(debt, preferredApp)
                 },
                 onVerifyPayment = { debt, isVerified ->
                     viewModel.verifySettlement(debt, isVerified)
@@ -397,34 +413,7 @@ fun RenderScreen(
             )
         }
 
-        ScreenTab.ANALYTICS -> {
-            AnalyticsScreen(
-                expenses = allExpenses,
-                chores = allChores,
-                members = householdMembers,
-                savingsGoals = savingsGoals,
-                budgetStatus = budgetStatus,
-                isSyncing = isSyncing,
-                onTriggerSync = {
-                    viewModel.syncWithSupabase()
-                    onShowMessage("Syncing with Supabase...")
-                },
-                onAddSavingsGoal = { title, target, initial, cat, color ->
-                    viewModel.addSavingsGoal(title, target, initial, cat, color)
-                    onShowMessage("Created savings goal: $title")
-                },
-                onUpdateSavings = { goal, delta ->
-                    viewModel.depositToSavings(goal, delta)
-                    onShowMessage("Deposited funds to ${goal.title}!")
-                },
-                onDeleteSavings = { id ->
-                    viewModel.deleteSavingsGoal(id)
-                    onShowMessage("Savings goal removed")
-                }
-            )
-        }
-
-        ScreenTab.HOUSEHOLD, ScreenTab.HOUSEHOLD_SETTINGS -> {
+        ScreenTab.HOUSEHOLD, ScreenTab.HOUSEHOLD_SETTINGS, ScreenTab.ANALYTICS -> {
             HouseholdProfileScreen(
                 currentUser = currentUser,
                 household = household,
@@ -453,8 +442,8 @@ fun RenderScreen(
                     viewModel.signUpWithSupabase(email, pass, name, upi, code, hName, cb)
                 },
                 onSignOut = {
-                    viewModel.signOutSupabase()
-                    onShowMessage("Signed out of Supabase")
+                    viewModel.logout()
+                    onShowMessage("Signed out of RoomieVault")
                 },
                 onResetPassword = { email, cb ->
                     viewModel.resetSupabasePassword(email, cb)
@@ -464,6 +453,10 @@ fun RenderScreen(
                 },
                 onTestConnection = { cb ->
                     viewModel.testSupabaseConnection(cb)
+                },
+                onClearSampleData = { name, email, upi, hName, code, budget ->
+                    viewModel.clearSampleDataAndSetupOriginalHousehold(name, email, upi, hName, code, budget)
+                    onShowMessage("Cleared sample data! Initialized original household.")
                 }
             )
         }

@@ -640,4 +640,60 @@ class RoomieRepository(
         val pullRes = syncManager.pullFromCloud(dao, householdId)
         return pushOk || pullRes.isSuccess
     }
+
+    suspend fun clearSampleDataAndSetupOriginalHousehold(
+        userName: String,
+        userEmail: String,
+        userUpi: String,
+        householdName: String,
+        householdCode: String,
+        monthlyBudget: Double = 30000.0
+    ) {
+        dao.clearAllExpenses()
+        dao.clearAllChores()
+        dao.clearAllDebts()
+        dao.clearAllSavingsGoals()
+        dao.clearAllUsers()
+        dao.clearAllHouseholds()
+
+        val cleanCode = householdCode.trim().uppercase().ifBlank { "HOME101" }
+        val householdId = "HOUSE_$cleanCode"
+        val userId = "USR_" + UUID.randomUUID().toString().take(8).uppercase()
+
+        val household = Household(
+            id = householdId,
+            name = householdName.ifBlank { "My Household" },
+            inviteCode = cleanCode,
+            createdByUserId = userId,
+            monthlyBudgetLimit = monthlyBudget,
+            budgetWarningThreshold = 80
+        )
+        dao.insertHousehold(household)
+
+        val currentUser = UserProfile(
+            id = userId,
+            name = userName.ifBlank { "User" },
+            email = userEmail.ifBlank { "user@example.com" },
+            upiId = userUpi.ifBlank { "user@upi" },
+            householdId = householdId,
+            householdName = household.name,
+            avatarColorHex = "#0F5132",
+            isCurrentUser = true,
+            isVirtual = false
+        )
+        dao.insertUser(currentUser)
+
+        val monthKey = DateUtils.getCurrentMonthYearKey()
+        val budget = BudgetConfig(
+            monthYearKey = monthKey,
+            householdId = householdId,
+            totalBudgetLimit = monthlyBudget,
+            alertThresholdPercent = 80
+        )
+        dao.insertBudgetConfig(budget)
+
+        backgroundScope.launch {
+            syncManager.pushAllToCloud(dao, householdId)
+        }
+    }
 }

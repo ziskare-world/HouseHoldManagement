@@ -5,6 +5,15 @@ import android.content.Intent
 import android.net.Uri
 import android.widget.Toast
 
+data class UpiPaymentResult(
+    val isSuccess: Boolean,
+    val transactionId: String?,
+    val approvalRefNo: String?,
+    val responseCode: String?,
+    val rawResponse: String,
+    val status: String
+)
+
 object UpiPaymentHelper {
 
     /**
@@ -27,7 +36,91 @@ object UpiPaymentHelper {
     }
 
     /**
-     * Launch UPI payment via Google Pay or standard UPI chooser
+     * Creates an Intent to launch UPI payment with activity result tracking
+     */
+    fun createUpiIntent(
+        payeeUpiId: String,
+        payeeName: String,
+        amount: Double,
+        note: String,
+        preferredApp: String? = null
+    ): Intent {
+        val upiUri = buildUpiUri(payeeUpiId, payeeName, amount, note)
+        val intent = Intent(Intent.ACTION_VIEW, upiUri)
+        if (!preferredApp.isNullOrBlank()) {
+            intent.setPackage(preferredApp)
+        }
+        return if (preferredApp.isNullOrBlank()) {
+            Intent.createChooser(intent, "Pay ₹$amount to $payeeName via UPI")
+        } else {
+            intent
+        }
+    }
+
+    /**
+     * Creates an Intent from raw UPI URI string
+     */
+    fun createUpiIntentFromUri(
+        upiUriString: String,
+        preferredPackage: String? = null
+    ): Intent {
+        val uri = Uri.parse(upiUriString)
+        val intent = Intent(Intent.ACTION_VIEW, uri)
+        if (!preferredPackage.isNullOrBlank()) {
+            intent.setPackage(preferredPackage)
+        }
+        return if (preferredPackage.isNullOrBlank()) {
+            Intent.createChooser(intent, "Pay via UPI App")
+        } else {
+            intent
+        }
+    }
+
+    /**
+     * Parses standard UPI response string from payment app result intent
+     */
+    fun parseUpiResponse(rawResponse: String?): UpiPaymentResult {
+        if (rawResponse.isNullOrBlank()) {
+            return UpiPaymentResult(
+                isSuccess = false,
+                transactionId = null,
+                approvalRefNo = null,
+                responseCode = null,
+                rawResponse = "",
+                status = "UNKNOWN"
+            )
+        }
+
+        val params = mutableMapOf<String, String>()
+        val tokens = rawResponse.split("&")
+        for (token in tokens) {
+            val parts = token.split("=")
+            if (parts.size >= 2) {
+                params[parts[0].trim().lowercase()] = parts[1].trim()
+            }
+        }
+
+        val status = params["status"]?.uppercase()
+            ?: if (rawResponse.contains("success", ignoreCase = true)) "SUCCESS"
+            else if (rawResponse.contains("fail", ignoreCase = true)) "FAILURE"
+            else "UNKNOWN"
+
+        val isSuccess = status == "SUCCESS" || params["responsecode"] == "00" || params["responsecode"] == "0"
+        val txnId = params["txnid"] ?: params["txnref"]
+        val refNo = params["approvalrefno"] ?: params["ref"] ?: params["approval_ref_no"]
+
+        return UpiPaymentResult(
+            isSuccess = isSuccess,
+            transactionId = txnId,
+            approvalRefNo = refNo,
+            responseCode = params["responsecode"],
+            rawResponse = rawResponse,
+            status = status
+        )
+    }
+
+    /**
+     * Direct launch helper with error toast fallback
      */
     fun launchUpiPayment(
         context: Context,
@@ -35,80 +128,43 @@ object UpiPaymentHelper {
         payeeName: String,
         amount: Double,
         note: String,
-        preferredApp: String? = null // e.g. "com.google.android.apps.nbu.paisa.user"
+        preferredApp: String? = null
     ): Boolean {
         if (payeeUpiId.isBlank()) {
             Toast.makeText(context, "Recipient UPI ID is missing!", Toast.LENGTH_LONG).show()
             return false
         }
 
-        val upiUri = buildUpiUri(payeeUpiId, payeeName, amount, note)
-        val intent = Intent(Intent.ACTION_VIEW, upiUri)
-
-        if (preferredApp != null) {
-            intent.setPackage(preferredApp)
-        }
-
         return try {
-            val chooser = if (preferredApp == null) {
-                Intent.createChooser(intent, "Pay ₹$amount to $payeeName via UPI")
-            } else {
-                intent
-            }
-            context.startActivity(chooser)
+            val intent = createUpiIntent(payeeUpiId, payeeName, amount, note, preferredApp)
+            context.startActivity(intent)
             true
         } catch (e: Exception) {
-            // Fallback to general intent without specific package
-            try {
-                val genericIntent = Intent(Intent.ACTION_VIEW, upiUri)
-                context.startActivity(Intent.createChooser(genericIntent, "Select UPI Payment App"))
-                true
-            } catch (ex: Exception) {
-                Toast.makeText(
-                    context,
-                    "No UPI App found (Google Pay / PhonePe / Paytm). You can manually mark as paid.",
-                    Toast.LENGTH_LONG
-                ).show()
-                false
-            }
+            Toast.makeText(
+                context,
+                "No UPI App found (Google Pay / PhonePe / Paytm).",
+                Toast.LENGTH_LONG
+            ).show()
+            false
         }
     }
 
-    /**
-     * Launch payment from a raw UPI URI string
-     */
     fun launchUpiUri(
         context: Context,
         upiUriString: String,
         preferredPackage: String? = null
     ): Boolean {
         return try {
-            val uri = Uri.parse(upiUriString)
-            val intent = Intent(Intent.ACTION_VIEW, uri)
-            if (!preferredPackage.isNullOrBlank()) {
-                intent.setPackage(preferredPackage)
-            }
-            val chooser = if (preferredPackage.isNullOrBlank()) {
-                Intent.createChooser(intent, "Pay via UPI App")
-            } else {
-                intent
-            }
-            context.startActivity(chooser)
+            val intent = createUpiIntentFromUri(upiUriString, preferredPackage)
+            context.startActivity(intent)
             true
         } catch (e: Exception) {
-            try {
-                val uri = Uri.parse(upiUriString)
-                val genericIntent = Intent(Intent.ACTION_VIEW, uri)
-                context.startActivity(Intent.createChooser(genericIntent, "Select UPI Payment App"))
-                true
-            } catch (ex: Exception) {
-                Toast.makeText(
-                    context,
-                    "No UPI App found. You can copy the recipient UPI ID to pay manually.",
-                    Toast.LENGTH_LONG
-                ).show()
-                false
-            }
+            Toast.makeText(
+                context,
+                "No UPI App found on device.",
+                Toast.LENGTH_LONG
+            ).show()
+            false
         }
     }
 }

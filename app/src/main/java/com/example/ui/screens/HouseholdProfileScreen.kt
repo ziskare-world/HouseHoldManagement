@@ -5,6 +5,8 @@ import android.content.ClipboardManager
 import android.content.Context
 import android.widget.Toast
 import androidx.compose.foundation.background
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -24,6 +26,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.CleaningServices
 import androidx.compose.material.icons.filled.Cloud
 import androidx.compose.material.icons.filled.CloudDownload
 import androidx.compose.material.icons.filled.CloudSync
@@ -103,6 +106,7 @@ fun HouseholdProfileScreen(
     onResetPassword: ((email: String, (Boolean, String) -> Unit) -> Unit)? = null,
     onPullFromCloud: (() -> Unit)? = null,
     onTestConnection: (((Boolean, String) -> Unit) -> Unit)? = null,
+    onClearSampleData: ((name: String, email: String, upi: String, hName: String, code: String, budget: Double) -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
@@ -114,6 +118,7 @@ fun HouseholdProfileScreen(
     var showSupabaseConfigDialog by remember { mutableStateOf(false) }
     var showAuthDialog by remember { mutableStateOf(false) }
     var showSchemaDialog by remember { mutableStateOf(false) }
+    var showClearSampleDataDialog by remember { mutableStateOf(false) }
 
     val authState by syncManager.authManager.authState.collectAsState()
     var isTestingConnection by remember { mutableStateOf(false) }
@@ -205,14 +210,15 @@ fun HouseholdProfileScreen(
 
                     Row(
                         modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween
+                        horizontalArrangement = Arrangement.spacedBy(16.dp)
                     ) {
-                        Column {
+                        Column(modifier = Modifier.weight(1f)) {
                             Text(
                                 text = "UPI Settlement ID",
                                 style = MaterialTheme.typography.labelSmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
+                            Spacer(modifier = Modifier.height(2.dp))
                             Row(
                                 verticalAlignment = Alignment.CenterVertically,
                                 horizontalArrangement = Arrangement.spacedBy(4.dp)
@@ -224,23 +230,29 @@ fun HouseholdProfileScreen(
                                     tint = Color(0xFF10B981)
                                 )
                                 Text(
-                                    text = currentUser?.upiId?.ifBlank { "Not configured" } ?: "Not configured",
+                                    text = currentUser?.upiId?.ifBlank { "Not set" } ?: "Not set",
                                     style = MaterialTheme.typography.bodyMedium,
-                                    fontWeight = FontWeight.SemiBold
+                                    fontWeight = FontWeight.SemiBold,
+                                    maxLines = 1
                                 )
                             }
                         }
 
-                        Column(horizontalAlignment = Alignment.End) {
+                        Column(
+                            modifier = Modifier.weight(1f),
+                            horizontalAlignment = Alignment.End
+                        ) {
                             Text(
                                 text = "Current Household",
                                 style = MaterialTheme.typography.labelSmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
+                            Spacer(modifier = Modifier.height(2.dp))
                             Text(
                                 text = household?.name ?: currentUser?.householdName ?: "Flat 402",
                                 style = MaterialTheme.typography.bodyMedium,
-                                fontWeight = FontWeight.SemiBold
+                                fontWeight = FontWeight.SemiBold,
+                                maxLines = 1
                             )
                         }
                     }
@@ -248,18 +260,13 @@ fun HouseholdProfileScreen(
             }
         }
 
-        // Supabase Cloud Authentication & Data Store Card
+        // Supabase Real-time Cloud Sync Card
         item {
             Card(
                 modifier = Modifier.fillMaxWidth(),
                 shape = RoundedCornerShape(20.dp),
-                colors = CardDefaults.cardColors(
-                    containerColor = if (authState is SupabaseAuthState.Authenticated)
-                        Color(0xFF3ECF8E).copy(alpha = 0.10f)
-                    else
-                        MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
-                ),
-                elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
             ) {
                 Column(modifier = Modifier.padding(20.dp)) {
                     Row(
@@ -270,62 +277,36 @@ fun HouseholdProfileScreen(
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             Box(
                                 modifier = Modifier
-                                    .size(40.dp)
+                                    .size(44.dp)
                                     .clip(CircleShape)
                                     .background(Color(0xFF3ECF8E)),
                                 contentAlignment = Alignment.Center
                             ) {
                                 Icon(
                                     imageVector = Icons.Default.Cloud,
-                                    contentDescription = "Supabase",
+                                    contentDescription = null,
                                     tint = Color.White,
-                                    modifier = Modifier.size(22.dp)
+                                    modifier = Modifier.size(24.dp)
                                 )
                             }
                             Spacer(modifier = Modifier.width(12.dp))
                             Column {
-                                Row(
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.spacedBy(6.dp)
-                                ) {
-                                    Text(
-                                        text = "Supabase Cloud Data Store",
-                                        style = MaterialTheme.typography.titleMedium,
-                                        fontWeight = FontWeight.Bold
-                                    )
-                                    if (authState is SupabaseAuthState.Authenticated) {
-                                        Box(
-                                            modifier = Modifier
-                                                .clip(RoundedCornerShape(6.dp))
-                                                .background(Color(0xFF10B981))
-                                                .padding(horizontal = 6.dp, vertical = 2.dp)
-                                        ) {
-                                            Text(
-                                                text = "AUTHENTICATED",
-                                                color = Color.White,
-                                                fontSize = 9.sp,
-                                                fontWeight = FontWeight.Bold
-                                            )
-                                        }
-                                    }
+                                Text(
+                                    text = "Cloud Sync & Backup",
+                                    style = MaterialTheme.typography.titleMedium,
+                                    fontWeight = FontWeight.Bold
+                                )
+                                val syncStatusText = when (authState) {
+                                    is SupabaseAuthState.Authenticated -> "Cloud Connected • ${(authState as SupabaseAuthState.Authenticated).user.email}"
+                                    is SupabaseAuthState.Loading -> "Connecting to Cloud..."
+                                    else -> "Local Offline Mode • Sync Ready"
                                 }
                                 Text(
-                                    text = if (authState is SupabaseAuthState.Authenticated)
-                                        (authState as SupabaseAuthState.Authenticated).user.email
-                                    else
-                                        "Offline SQLite Mode • Connect Supabase for multi-device sync",
+                                    text = syncStatusText,
                                     style = MaterialTheme.typography.bodySmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
                             }
-                        }
-
-                        IconButton(onClick = { showSupabaseConfigDialog = true }) {
-                            Icon(
-                                imageVector = Icons.Default.Key,
-                                contentDescription = "Configure Supabase API",
-                                tint = MaterialTheme.colorScheme.primary
-                            )
                         }
                     }
 
@@ -335,18 +316,18 @@ fun HouseholdProfileScreen(
                         val msg = connectionTestResult!!.second
                         Surface(
                             shape = RoundedCornerShape(8.dp),
-                            color = if (isOk) Color(0xFF10B981).copy(alpha = 0.2f) else MaterialTheme.colorScheme.errorContainer,
+                            color = if (isOk) Color(0xFF10B981).copy(alpha = 0.15f) else MaterialTheme.colorScheme.errorContainer,
                             modifier = Modifier.fillMaxWidth()
                         ) {
                             Row(
-                                modifier = Modifier.padding(8.dp),
+                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
                                 verticalAlignment = Alignment.CenterVertically,
                                 horizontalArrangement = Arrangement.spacedBy(6.dp)
                             ) {
                                 Icon(
-                                    imageVector = if (isOk) Icons.Default.Wifi else Icons.Default.WifiOff,
+                                    imageVector = if (isOk) Icons.Default.CheckCircle else Icons.Default.WifiOff,
                                     contentDescription = null,
-                                    tint = if (isOk) Color(0xFF0F5132) else MaterialTheme.colorScheme.error,
+                                    tint = if (isOk) Color(0xFF10B981) else MaterialTheme.colorScheme.error,
                                     modifier = Modifier.size(16.dp)
                                 )
                                 Text(
@@ -360,41 +341,11 @@ fun HouseholdProfileScreen(
 
                     Spacer(modifier = Modifier.height(14.dp))
 
-                    // Action buttons: Auth / Push / Pull / Test / SQL Schema
+                    // Action buttons: Sync All & Test Ping
                     Row(
                         modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        horizontalArrangement = Arrangement.spacedBy(10.dp)
                     ) {
-                        if (authState is SupabaseAuthState.Authenticated) {
-                            OutlinedButton(
-                                onClick = {
-                                    onSignOut?.invoke() ?: run {
-                                        scope.launch {
-                                            syncManager.authManager.signOut(syncManager.supabaseUrl, syncManager.supabaseAnonKey)
-                                            Toast.makeText(context, "Signed out of Supabase", Toast.LENGTH_SHORT).show()
-                                        }
-                                    }
-                                },
-                                modifier = Modifier.weight(1f),
-                                shape = RoundedCornerShape(12.dp)
-                            ) {
-                                Icon(Icons.Default.ExitToApp, contentDescription = null, modifier = Modifier.size(16.dp))
-                                Spacer(modifier = Modifier.width(4.dp))
-                                Text("Sign Out", fontSize = 12.sp)
-                            }
-                        } else {
-                            Button(
-                                onClick = { showAuthDialog = true },
-                                modifier = Modifier.weight(1f),
-                                shape = RoundedCornerShape(12.dp),
-                                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF3ECF8E))
-                            ) {
-                                Icon(Icons.Default.Lock, contentDescription = null, tint = Color.White, modifier = Modifier.size(16.dp))
-                                Spacer(modifier = Modifier.width(4.dp))
-                                Text("Sign In / Join", color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.Bold)
-                            }
-                        }
-
                         Button(
                             onClick = onTriggerSync,
                             modifier = Modifier.weight(1f),
@@ -402,31 +353,8 @@ fun HouseholdProfileScreen(
                             colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary)
                         ) {
                             Icon(Icons.Default.CloudSync, contentDescription = null, modifier = Modifier.size(16.dp))
-                            Spacer(modifier = Modifier.width(4.dp))
-                            Text("Sync All", fontSize = 12.sp, fontWeight = FontWeight.Bold)
-                        }
-                    }
-
-                    Spacer(modifier = Modifier.height(8.dp))
-
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        OutlinedButton(
-                            onClick = {
-                                if (onPullFromCloud != null) {
-                                    onPullFromCloud()
-                                } else {
-                                    onTriggerSync()
-                                }
-                            },
-                            modifier = Modifier.weight(1f),
-                            shape = RoundedCornerShape(12.dp)
-                        ) {
-                            Icon(Icons.Default.CloudDownload, contentDescription = null, modifier = Modifier.size(14.dp))
-                            Spacer(modifier = Modifier.width(4.dp))
-                            Text("Pull Cloud", fontSize = 11.sp)
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text("Sync All", fontSize = 13.sp, fontWeight = FontWeight.Bold)
                         }
 
                         OutlinedButton(
@@ -453,18 +381,8 @@ fun HouseholdProfileScreen(
                             } else {
                                 Icon(Icons.Default.Wifi, contentDescription = null, modifier = Modifier.size(14.dp))
                             }
-                            Spacer(modifier = Modifier.width(4.dp))
-                            Text("Test Ping", fontSize = 11.sp)
-                        }
-
-                        OutlinedButton(
-                            onClick = { showSchemaDialog = true },
-                            modifier = Modifier.weight(1f),
-                            shape = RoundedCornerShape(12.dp)
-                        ) {
-                            Icon(Icons.Default.Storage, contentDescription = null, modifier = Modifier.size(14.dp))
-                            Spacer(modifier = Modifier.width(4.dp))
-                            Text("SQL Schema", fontSize = 11.sp)
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text("Test Ping", fontSize = 13.sp)
                         }
                     }
 
@@ -721,6 +639,82 @@ fun HouseholdProfileScreen(
                 }
             }
         }
+
+        // Account & Sign Out Section
+        item {
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(20.dp),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
+            ) {
+                Column(
+                    modifier = Modifier.padding(20.dp),
+                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    Text(
+                        text = "App Session",
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold
+                    )
+                    Text(
+                        text = "Signed in as ${currentUser?.name ?: "User"} (${currentUser?.email?.ifBlank { "Local Mode" } ?: "Local Mode"}).",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+
+                    OutlinedButton(
+                        onClick = {
+                            showClearSampleDataDialog = true
+                        },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(48.dp),
+                        shape = RoundedCornerShape(12.dp),
+                        colors = ButtonDefaults.outlinedButtonColors(
+                            contentColor = MaterialTheme.colorScheme.primary
+                        )
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.CleaningServices,
+                            contentDescription = null,
+                            modifier = Modifier.size(18.dp)
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(
+                            text = "Start Fresh (Clear Sample Data)",
+                            fontWeight = FontWeight.SemiBold
+                        )
+                    }
+
+                    Button(
+                        onClick = {
+                            onSignOut?.invoke()
+                        },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(48.dp),
+                        shape = RoundedCornerShape(12.dp),
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = MaterialTheme.colorScheme.error
+                        )
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.ExitToApp,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.onError,
+                            modifier = Modifier.size(18.dp)
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(
+                            text = "Log Out of RoomieVault",
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.onError
+                        )
+                    }
+                }
+            }
+        }
     }
 
     // --- Dialogs ---
@@ -824,7 +818,7 @@ fun HouseholdProfileScreen(
                         value = supabaseUrl,
                         onValueChange = { supabaseUrl = it },
                         label = { Text("Supabase URL") },
-                        placeholder = { Text("https://xyzcompany.supabase.co") },
+                        placeholder = { Text("https://gxpxbnrehrawxwgzdqqm.supabase.co") },
                         modifier = Modifier.fillMaxWidth(),
                         shape = RoundedCornerShape(12.dp),
                         singleLine = true
@@ -833,8 +827,8 @@ fun HouseholdProfileScreen(
                     OutlinedTextField(
                         value = supabaseAnonKey,
                         onValueChange = { supabaseAnonKey = it },
-                        label = { Text("Supabase Anon Public Key") },
-                        placeholder = { Text("sb-anon-key-...") },
+                        label = { Text("Supabase Publishable / Anon Key") },
+                        placeholder = { Text("sb_publishable_...") },
                         modifier = Modifier.fillMaxWidth(),
                         shape = RoundedCornerShape(12.dp),
                         singleLine = true
@@ -1099,6 +1093,99 @@ fun HouseholdProfileScreen(
             },
             dismissButton = {
                 TextButton(onClick = { showJoinHouseholdDialog = false }) {
+                    Text("Cancel")
+                }
+            }
+        )
+    }
+
+    // 7. Clear Sample Data & Start Fresh Dialog
+    if (showClearSampleDataDialog) {
+        var freshName by remember { mutableStateOf(currentUser?.name ?: "") }
+        var freshEmail by remember { mutableStateOf(currentUser?.email ?: "") }
+        var freshUpi by remember { mutableStateOf(currentUser?.upiId ?: "") }
+        var freshHName by remember { mutableStateOf(household?.name ?: "") }
+        var freshCode by remember { mutableStateOf(household?.inviteCode ?: "") }
+        var freshBudget by remember { mutableStateOf((household?.monthlyBudgetLimit ?: 30000.0).toInt().toString()) }
+
+        AlertDialog(
+            onDismissRequest = { showClearSampleDataDialog = false },
+            title = { Text("Start Fresh with Original Data", fontWeight = FontWeight.Bold) },
+            text = {
+                Column(
+                    modifier = Modifier.verticalScroll(rememberScrollState()),
+                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    Text(
+                        "This will wipe all demo flatmates and sample chores/expenses, and configure RoomieVault with your real household setup.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    OutlinedTextField(
+                        value = freshName,
+                        onValueChange = { freshName = it },
+                        label = { Text("Your Full Name") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    OutlinedTextField(
+                        value = freshEmail,
+                        onValueChange = { freshEmail = it },
+                        label = { Text("Your Email") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    OutlinedTextField(
+                        value = freshUpi,
+                        onValueChange = { freshUpi = it },
+                        label = { Text("Your UPI ID (e.g. name@okhdfcbank)") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    OutlinedTextField(
+                        value = freshHName,
+                        onValueChange = { freshHName = it },
+                        label = { Text("Household / Flat Name") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    OutlinedTextField(
+                        value = freshCode,
+                        onValueChange = { freshCode = it.uppercase() },
+                        label = { Text("Shared Invite Code (e.g. FLAT402)") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    OutlinedTextField(
+                        value = freshBudget,
+                        onValueChange = { freshBudget = it },
+                        label = { Text("Monthly Budget Limit (₹)") },
+                        keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(keyboardType = androidx.compose.ui.text.input.KeyboardType.Number),
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        val budget = freshBudget.toDoubleOrNull() ?: 30000.0
+                        onClearSampleData?.invoke(
+                            freshName.ifBlank { "User" },
+                            freshEmail.ifBlank { "user@example.com" },
+                            freshUpi.ifBlank { "user@upi" },
+                            freshHName.ifBlank { "My Household" },
+                            freshCode.ifBlank { "HOME101" },
+                            budget
+                        )
+                        showClearSampleDataDialog = false
+                    }
+                ) {
+                    Text("Confirm & Start Fresh")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showClearSampleDataDialog = false }) {
                     Text("Cancel")
                 }
             }
