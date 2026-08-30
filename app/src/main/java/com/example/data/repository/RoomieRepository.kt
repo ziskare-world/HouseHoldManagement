@@ -67,262 +67,60 @@ class RoomieRepository(
     fun getBudgetConfig(monthKey: String, householdId: String): Flow<BudgetConfig?> =
         dao.getBudgetConfig(monthKey, householdId)
 
-    // --- Seed Initial Data if First Run ---
-    suspend fun checkAndSeedInitialData() {
-        val existingUser = dao.getCurrentUserDirect()
-        if (existingUser != null) return // Already initialized
+    // --- Clean Slate: Purge Legacy Sample Mock Data ---
+    suspend fun purgeSampleMockDataIfPresent() {
+        val mockUser = dao.getCurrentUserDirect()
+        if (mockUser?.id == "USR_ALEX" || mockUser?.householdId == "HOUSE_FLAT_402") {
+            dao.clearAllExpenses()
+            dao.clearAllChores()
+            dao.clearAllDebts()
+            dao.clearAllSavingsGoals()
+            dao.clearAllUsers()
+            dao.clearAllHouseholds()
+        }
+    }
 
-        val defaultHouseholdId = "HOUSE_FLAT_402"
-        val initialHousehold = Household(
-            id = defaultHouseholdId,
-            name = "Flat 402 - Green View",
-            inviteCode = "FLAT402",
-            createdByUserId = "USR_ALEX",
-            monthlyBudgetLimit = 35000.0,
-            budgetWarningThreshold = 80
+    suspend fun regenerateInviteCode(householdId: String): String {
+        val newCode = "RV" + UUID.randomUUID().toString().replace("-", "").take(4).uppercase()
+        val household = dao.getHouseholdDirect(householdId)
+        if (household != null) {
+            val updated = household.copy(inviteCode = newCode)
+            dao.insertHousehold(updated)
+            backgroundScope.launch {
+                syncManager.dataStore.pushHousehold(syncManager.supabaseUrl, syncManager.supabaseAnonKey, updated)
+            }
+        }
+        return newCode
+    }
+
+    suspend fun updateHouseholdDetailsAndBudget(
+        householdId: String,
+        name: String,
+        monthlyBudget: Double,
+        warningThreshold: Int = 80
+    ) {
+        val household = dao.getHouseholdDirect(householdId)
+        val code = household?.inviteCode ?: householdId.removePrefix("HOUSE_").ifBlank { "RV" + UUID.randomUUID().toString().take(4).uppercase() }
+        val updated = (household ?: Household(id = householdId, name = name, inviteCode = code, createdByUserId = "ADMIN")).copy(
+            name = name,
+            monthlyBudgetLimit = monthlyBudget,
+            budgetWarningThreshold = warningThreshold
         )
-        dao.insertHousehold(initialHousehold)
+        dao.insertHousehold(updated)
+        backgroundScope.launch {
+            syncManager.dataStore.pushHousehold(syncManager.supabaseUrl, syncManager.supabaseAnonKey, updated)
+        }
 
-        val currentUser = UserProfile(
-            id = "USR_ALEX",
-            name = "Alex Sharma",
-            email = "alex.sharma@example.com",
-            upiId = "alexsharma@okaxis",
-            householdId = defaultHouseholdId,
-            householdName = "Flat 402 - Green View",
-            avatarColorHex = "#0F5132",
-            isCurrentUser = true
+        val monthKey = DateUtils.getCurrentMonthYearKey()
+        val existingBudget = dao.getBudgetConfigDirect(monthKey, householdId)
+        val newBudget = (existingBudget ?: BudgetConfig(monthYearKey = monthKey, householdId = householdId)).copy(
+            totalBudgetLimit = monthlyBudget,
+            alertThresholdPercent = warningThreshold
         )
-
-        val roommateRahul = UserProfile(
-            id = "USR_RAHUL",
-            name = "Rahul Verma",
-            email = "rahul.v@example.com",
-            upiId = "rahulverma@paytm",
-            householdId = defaultHouseholdId,
-            householdName = "Flat 402 - Green View",
-            avatarColorHex = "#3B82F6",
-            isCurrentUser = false
-        )
-
-        val roommatePriya = UserProfile(
-            id = "USR_PRIYA",
-            name = "Priya Patel",
-            email = "priya.p@example.com",
-            upiId = "priyapatel@okhdfcbank",
-            householdId = defaultHouseholdId,
-            householdName = "Flat 402 - Green View",
-            avatarColorHex = "#EC4899",
-            isCurrentUser = false
-        )
-
-        val roommateVikram = UserProfile(
-            id = "USR_VIKRAM",
-            name = "Vikram Singh",
-            email = "vikram.s@example.com",
-            upiId = "vikram@ybl",
-            householdId = defaultHouseholdId,
-            householdName = "Flat 402 - Green View",
-            avatarColorHex = "#F59E0B",
-            isCurrentUser = false
-        )
-
-        dao.insertUsers(listOf(currentUser, roommateRahul, roommatePriya, roommateVikram))
-
-        // Initial Expenses
-        val currentMonthKey = DateUtils.getCurrentMonthYearKey()
-        val expenses = listOf(
-            ExpenseItem(
-                id = UUID.randomUUID().toString(),
-                title = "Monthly Groceries & Supermarket",
-                amount = 6450.0,
-                category = "Groceries",
-                monthYearKey = currentMonthKey,
-                paidByUserId = currentUser.id,
-                paidByName = currentUser.name,
-                splitType = "EQUAL",
-                householdId = defaultHouseholdId,
-                notes = "Vegetables, rice, oil, spices from DMart"
-            ),
-            ExpenseItem(
-                id = UUID.randomUUID().toString(),
-                title = "Fiber WiFi & Internet Bill",
-                amount = 1199.0,
-                category = "Utilities",
-                monthYearKey = currentMonthKey,
-                paidByUserId = roommateRahul.id,
-                paidByName = roommateRahul.name,
-                splitType = "EQUAL",
-                householdId = defaultHouseholdId,
-                notes = "Airtel 200Mbps Monthly Unlimited"
-            ),
-            ExpenseItem(
-                id = UUID.randomUUID().toString(),
-                title = "House Cleaning Supplies & Detergents",
-                amount = 1420.0,
-                category = "Household Supplies",
-                monthYearKey = currentMonthKey,
-                paidByUserId = roommatePriya.id,
-                paidByName = roommatePriya.name,
-                splitType = "EQUAL",
-                householdId = defaultHouseholdId,
-                notes = "Mops, trash bags, dishwash liquid"
-            ),
-            ExpenseItem(
-                id = UUID.randomUUID().toString(),
-                title = "Weekend Flatmate Dinner & Biryani",
-                amount = 2850.0,
-                category = "Food & Dining",
-                monthYearKey = currentMonthKey,
-                paidByUserId = currentUser.id,
-                paidByName = currentUser.name,
-                splitType = "EQUAL",
-                householdId = defaultHouseholdId,
-                notes = "Special Biryani Feast"
-            )
-        )
-        dao.insertExpenses(expenses)
-
-        // Initial Chores with Daily, Sunday-to-Sunday rotating, and Monthly
-        val memberIds = "USR_ALEX,USR_RAHUL,USR_PRIYA,USR_VIKRAM"
-        val chores = listOf(
-            ChoreTask(
-                id = UUID.randomUUID().toString(),
-                title = "Sunday Deep Cleaning (Hall & Balcony)",
-                description = "Alternates every Sunday among roommates. This Sunday is Alex's turn, next is Rahul's!",
-                category = "Cleaning",
-                assignedToUserId = currentUser.id,
-                assignedToUserName = currentUser.name,
-                householdId = defaultHouseholdId,
-                frequency = "WEEKLY_SUNDAY_ROTATION",
-                rotationMemberIds = memberIds,
-                rotationIndex = 0,
-                scheduledTime = "10:00 AM",
-                scheduledDayOfWeek = 1, // Sunday
-                status = "PENDING",
-                points = 25
-            ),
-            ChoreTask(
-                id = UUID.randomUUID().toString(),
-                title = "Daily Evening Trash & Wet Waste Disposal",
-                description = "Take waste bags to society collection bin before 9 PM",
-                category = "Trash",
-                assignedToUserId = roommateRahul.id,
-                assignedToUserName = roommateRahul.name,
-                householdId = defaultHouseholdId,
-                frequency = "DAILY",
-                scheduledTime = "08:30 PM",
-                status = "PENDING",
-                points = 10
-            ),
-            ChoreTask(
-                id = UUID.randomUUID().toString(),
-                title = "Kitchen Countertop & Stove Wipedown",
-                description = "Nightly kitchen sanitize after dinner",
-                category = "Kitchen",
-                assignedToUserId = roommatePriya.id,
-                assignedToUserName = roommatePriya.name,
-                householdId = defaultHouseholdId,
-                frequency = "DAILY",
-                scheduledTime = "10:30 PM",
-                status = "COMPLETED",
-                lastCompletedDate = DateUtils.formatDisplayDate(System.currentTimeMillis()),
-                points = 10
-            ),
-            ChoreTask(
-                id = UUID.randomUUID().toString(),
-                title = "Monthly RO Water Purifier & AC Filter Clean",
-                description = "Check RO TDS, change pre-filter, clean AC dust mesh on 1st of every month",
-                category = "Maintenance",
-                assignedToUserId = roommateVikram.id,
-                assignedToUserName = roommateVikram.name,
-                householdId = defaultHouseholdId,
-                frequency = "MONTHLY",
-                scheduledDayOfMonth = 1,
-                scheduledTime = "11:00 AM",
-                status = "PENDING",
-                points = 30
-            )
-        )
-        dao.insertChores(chores)
-
-        // Initial Settlement Debts
-        val debts = listOf(
-            SettlementDebt(
-                id = UUID.randomUUID().toString(),
-                fromUserId = roommateRahul.id,
-                fromUserName = roommateRahul.name,
-                toUserId = currentUser.id,
-                toUserName = currentUser.name,
-                toUserUpiId = currentUser.upiId,
-                amount = 1612.50,
-                reason = "Share of Monthly Groceries (DMart)",
-                status = "PENDING",
-                householdId = defaultHouseholdId
-            ),
-            SettlementDebt(
-                id = UUID.randomUUID().toString(),
-                fromUserId = currentUser.id,
-                fromUserName = currentUser.name,
-                toUserId = roommateRahul.id,
-                toUserName = roommateRahul.name,
-                toUserUpiId = roommateRahul.upiId,
-                amount = 299.75,
-                reason = "WiFi Bill Split (Airtel)",
-                status = "PENDING",
-                householdId = defaultHouseholdId
-            ),
-            SettlementDebt(
-                id = UUID.randomUUID().toString(),
-                fromUserId = roommateVikram.id,
-                fromUserName = roommateVikram.name,
-                toUserId = currentUser.id,
-                toUserName = currentUser.name,
-                toUserUpiId = currentUser.upiId,
-                amount = 712.50,
-                reason = "Weekend Dinner Biryani Split",
-                status = "PAID_PENDING_CONFIRMATION",
-                transactionRef = "UPI/GPay/6829103",
-                householdId = defaultHouseholdId
-            )
-        )
-        dao.insertDebts(debts)
-
-        // Initial Savings Goals
-        val savings = listOf(
-            SavingsGoal(
-                id = UUID.randomUUID().toString(),
-                title = "Flat Emergency & Repair Fund",
-                targetAmount = 40000.0,
-                currentAmount = 24500.0,
-                category = "Emergency Fund",
-                householdId = defaultHouseholdId,
-                colorHex = "#10B981"
-            ),
-            SavingsGoal(
-                id = UUID.randomUUID().toString(),
-                title = "Living Room Smart TV & Microwave",
-                targetAmount = 28000.0,
-                currentAmount = 19000.0,
-                category = "Room Appliance",
-                householdId = defaultHouseholdId,
-                colorHex = "#3B82F6"
-            )
-        )
-        savings.forEach { dao.insertSavingsGoal(it) }
-
-        // Initial Budget Config
-        val budget = BudgetConfig(
-            monthYearKey = currentMonthKey,
-            householdId = defaultHouseholdId,
-            totalBudgetLimit = 35000.0,
-            alertThresholdPercent = 80,
-            groceriesBudget = 12000.0,
-            rentUtilitiesBudget = 15000.0,
-            foodDiningBudget = 5000.0,
-            miscellaneousBudget = 3000.0
-        )
-        dao.insertBudgetConfig(budget)
+        dao.insertBudgetConfig(newBudget)
+        backgroundScope.launch {
+            syncManager.dataStore.pushBudgetConfig(syncManager.supabaseUrl, syncManager.supabaseAnonKey, newBudget)
+        }
     }
 
     // --- Action Methods with Automatic Cloud Sync ---

@@ -70,6 +70,25 @@ class RoomieViewModel(application: Application) : AndroidViewModel(application) 
 
     init {
         ChoreNotificationHelper.createNotificationChannels(context)
+        viewModelScope.launch {
+            repository.purgeSampleMockDataIfPresent()
+        }
+    }
+
+    fun regenerateHouseholdCode() {
+        viewModelScope.launch {
+            val hid = currentHousehold.value?.id ?: currentUser.value?.householdId ?: return@launch
+            val newCode = repository.regenerateInviteCode(hid)
+            _statusMessage.value = "New Invite Code generated: $newCode"
+        }
+    }
+
+    fun updateHouseholdAndBudget(name: String, budget: Double, threshold: Int = 80) {
+        viewModelScope.launch {
+            val hid = currentHousehold.value?.id ?: currentUser.value?.householdId ?: return@launch
+            repository.updateHouseholdDetailsAndBudget(hid, name, budget, threshold)
+            _statusMessage.value = "Household and monthly budget updated!"
+        }
     }
 
     fun logout() {

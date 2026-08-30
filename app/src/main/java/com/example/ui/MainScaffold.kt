@@ -431,6 +431,12 @@ fun RenderScreen(
                     viewModel.joinHousehold(code, name)
                     onShowMessage("Switched to household: $code")
                 },
+                onRegenerateCode = {
+                    viewModel.regenerateHouseholdCode()
+                },
+                onUpdateHouseholdAndBudget = { name, budget, threshold ->
+                    viewModel.updateHouseholdAndBudget(name, budget, threshold)
+                },
                 onTriggerSync = {
                     viewModel.syncWithSupabase()
                     onShowMessage("Cloud sync complete!")
@@ -453,10 +459,6 @@ fun RenderScreen(
                 },
                 onTestConnection = { cb ->
                     viewModel.testSupabaseConnection(cb)
-                },
-                onClearSampleData = { name, email, upi, hName, code, budget ->
-                    viewModel.clearSampleDataAndSetupOriginalHousehold(name, email, upi, hName, code, budget)
-                    onShowMessage("Cleared sample data! Initialized original household.")
                 }
             )
         }
