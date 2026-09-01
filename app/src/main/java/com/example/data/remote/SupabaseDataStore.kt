@@ -302,12 +302,19 @@ class SupabaseDataStore(
             }
 
             // 3. Pull Expenses
+            val currentUserId = dao.getCurrentUserDirect()?.id ?: ""
             val expensesJson = queryTable(baseUrl, anonKey, "expenses", "household_id=eq.$householdId")
             if (!expensesJson.isNullOrBlank()) {
                 val array = JSONArray(expensesJson)
                 val expenseList = mutableListOf<ExpenseItem>()
                 for (i in 0 until array.length()) {
                     val obj = array.getJSONObject(i)
+                    val splitType = obj.optString("split_type", "EQUAL")
+                    val paidByUserId = obj.optString("paid_by_user_id", "")
+                    // Privacy guarantee: Do not pull personal expenses created by other roommates!
+                    if (splitType == "PERSONAL" && currentUserId.isNotBlank() && paidByUserId != currentUserId) {
+                        continue
+                    }
                     expenseList.add(
                         ExpenseItem(
                             id = obj.optString("id", ""),
@@ -316,9 +323,9 @@ class SupabaseDataStore(
                             category = obj.optString("category", "General"),
                             dateMillis = obj.optLong("date_millis", System.currentTimeMillis()),
                             monthYearKey = obj.optString("month_year_key", "2026-08"),
-                            paidByUserId = obj.optString("paid_by_user_id", ""),
+                            paidByUserId = paidByUserId,
                             paidByName = obj.optString("paid_by_name", "User"),
-                            splitType = obj.optString("split_type", "EQUAL"),
+                            splitType = splitType,
                             splitWithUserIds = obj.optString("split_with_user_ids", ""),
                             householdId = obj.optString("household_id", householdId),
                             notes = obj.optString("notes", ""),

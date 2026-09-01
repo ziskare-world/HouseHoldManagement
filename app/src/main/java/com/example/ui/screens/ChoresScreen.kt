@@ -5,6 +5,8 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -17,6 +19,10 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.unit.sp
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
@@ -27,6 +33,7 @@ import androidx.compose.material.icons.filled.CalendarMonth
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.CleaningServices
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.NotificationsActive
 import androidx.compose.material.icons.filled.RadioButtonUnchecked
 import androidx.compose.material.icons.filled.Repeat
@@ -56,12 +63,10 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import com.example.data.local.model.ChoreTask
 import com.example.data.local.model.UserProfile
 import com.example.ui.components.ChoreDistributionChart
@@ -69,7 +74,8 @@ import com.example.util.DateUtils
 
 val ChoreCategories = listOf("Cleaning", "Kitchen", "Trash", "Groceries", "Maintenance")
 val ChoreFrequencies = listOf(
-    "DAILY" to "Daily Task",
+    "DAILY_ROTATION" to "Daily Rotation (Day 1: Roommate A, Day 2: Roommate B...)",
+    "DAILY" to "Daily Task (Fixed Roommate)",
     "WEEKLY_SUNDAY_ROTATION" to "Sunday-to-Sunday Rotation",
     "WEEKLY_CUSTOM" to "Weekly Schedule",
     "MONTHLY" to "Monthly Task"
@@ -96,14 +102,25 @@ fun ChoresScreen(
         dayOfMonth: Int,
         points: Int
     ) -> Unit,
+    onUpdateChore: ((ChoreTask) -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
     var showAddDialog by remember { mutableStateOf(false) }
+    var editingChore by remember { mutableStateOf<ChoreTask?>(null) }
     var selectedFilter by remember { mutableStateOf("ALL") }
+
+    val allRoommates = remember(members, currentUser) {
+        val combined = mutableListOf<UserProfile>()
+        currentUser?.let { combined.add(it) }
+        members.forEach { m ->
+            if (combined.none { it.id == m.id }) combined.add(m)
+        }
+        combined.ifEmpty { listOfNotNull(currentUser) }
+    }
 
     val filteredChores = remember(chores, selectedFilter) {
         when (selectedFilter) {
-            "DAILY" -> chores.filter { it.frequency == "DAILY" }
+            "DAILY" -> chores.filter { it.frequency == "DAILY" || it.frequency == "DAILY_ROTATION" }
             "SUNDAY" -> chores.filter { it.frequency == "WEEKLY_SUNDAY_ROTATION" }
             "MONTHLY" -> chores.filter { it.frequency == "MONTHLY" }
             "MY_CHORES" -> chores.filter { it.assignedToUserId == currentUser?.id }
@@ -133,9 +150,11 @@ fun ChoresScreen(
                 }
             }
 
-            // Work Distribution Bar Chart
-            item {
-                ChoreDistributionChart(chores = chores, members = members)
+            // Work Distribution Bar Chart (Only show if chores exist)
+            if (chores.isNotEmpty()) {
+                item {
+                    ChoreDistributionChart(chores = chores, members = members)
+                }
             }
 
             // Filter Chips
@@ -195,6 +214,7 @@ fun ChoresScreen(
                         onToggle = { onToggleChore(chore) },
                         onRotate = { onRotateSundayChore(chore) },
                         onSendAlert = { onSendPushAlert(chore) },
+                        onEdit = { editingChore = chore },
                         onDelete = { onDeleteChore(chore.id) }
                     )
                 }
@@ -219,12 +239,40 @@ fun ChoresScreen(
 
     if (showAddDialog) {
         AddChoreDialog(
-            members = members,
+            members = allRoommates,
             currentUser = currentUser,
+            initialChore = null,
             onDismiss = { showAddDialog = false },
             onConfirm = { title, desc, cat, freq, user, rotMembers, time, dow, dom, pts ->
                 onAddChore(title, desc, cat, freq, user, rotMembers, time, dow, dom, pts)
                 showAddDialog = false
+            }
+        )
+    }
+
+    editingChore?.let { choreToEdit ->
+        AddChoreDialog(
+            members = allRoommates,
+            currentUser = currentUser,
+            initialChore = choreToEdit,
+            onDismiss = { editingChore = null },
+            onConfirm = { title, desc, cat, freq, user, rotMembers, time, dow, dom, pts ->
+                val rotationIds = rotMembers.joinToString(",") { it.id }
+                val updated = choreToEdit.copy(
+                    title = title,
+                    description = desc,
+                    category = cat,
+                    frequency = freq,
+                    assignedToUserId = user.id,
+                    assignedToUserName = user.name,
+                    rotationMemberIds = rotationIds,
+                    scheduledTime = time,
+                    scheduledDayOfWeek = dow,
+                    scheduledDayOfMonth = dom,
+                    points = pts
+                )
+                onUpdateChore?.invoke(updated)
+                editingChore = null
             }
         )
     }
@@ -236,6 +284,7 @@ fun ChoreCardItem(
     onToggle: () -> Unit,
     onRotate: () -> Unit,
     onSendAlert: () -> Unit,
+    onEdit: () -> Unit,
     onDelete: () -> Unit
 ) {
     val isCompleted = chore.status == "COMPLETED"
@@ -323,6 +372,7 @@ fun ChoreCardItem(
                     ) {
                         Text(
                             text = when (chore.frequency) {
+                                "DAILY_ROTATION" -> "🔄 Daily (${chore.scheduledTime})"
                                 "WEEKLY_SUNDAY_ROTATION" -> "🔄 Sunday Rotation"
                                 "DAILY" -> "📅 Daily (${chore.scheduledTime})"
                                 "MONTHLY" -> "📆 Monthly"
@@ -341,8 +391,11 @@ fun ChoreCardItem(
                     )
                 }
 
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    if (chore.frequency == "WEEKLY_SUNDAY_ROTATION") {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(2.dp)
+                ) {
+                    if (chore.frequency.contains("ROTATION") || chore.rotationMemberIds.isNotBlank()) {
                         IconButton(onClick = onRotate, modifier = Modifier.size(28.dp)) {
                             Icon(
                                 imageVector = Icons.Default.SwapHoriz,
@@ -352,6 +405,16 @@ fun ChoreCardItem(
                             )
                         }
                     }
+
+                    IconButton(onClick = onEdit, modifier = Modifier.size(28.dp)) {
+                        Icon(
+                            imageVector = Icons.Default.Edit,
+                            contentDescription = "Edit Chore",
+                            tint = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.size(16.dp)
+                        )
+                    }
+
                     IconButton(onClick = onDelete, modifier = Modifier.size(28.dp)) {
                         Icon(
                             imageVector = Icons.Default.Delete,
@@ -366,11 +429,12 @@ fun ChoreCardItem(
     }
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
 fun AddChoreDialog(
     members: List<UserProfile>,
     currentUser: UserProfile?,
+    initialChore: ChoreTask? = null,
     onDismiss: () -> Unit,
     onConfirm: (
         title: String,
@@ -385,13 +449,29 @@ fun AddChoreDialog(
         points: Int
     ) -> Unit
 ) {
-    var title by remember { mutableStateOf("") }
-    var description by remember { mutableStateOf("") }
-    var selectedCategory by remember { mutableStateOf(ChoreCategories.first()) }
-    var selectedFrequency by remember { mutableStateOf("DAILY") }
-    var selectedAssignee by remember { mutableStateOf(currentUser ?: members.firstOrNull() ?: UserProfile("USR_1", "Alex")) }
-    var scheduledTime by remember { mutableStateOf("09:00 AM") }
-    var pointsText by remember { mutableStateOf("10") }
+    val isEditing = initialChore != null
+
+    var title by remember { mutableStateOf(initialChore?.title ?: "") }
+    var description by remember { mutableStateOf(initialChore?.description ?: "") }
+    var selectedCategory by remember { mutableStateOf(initialChore?.category ?: ChoreCategories.first()) }
+    var selectedFrequency by remember { mutableStateOf(initialChore?.frequency ?: "DAILY_ROTATION") }
+    var selectedAssignee by remember {
+        mutableStateOf(
+            initialChore?.let { c -> members.find { it.id == c.assignedToUserId } }
+                ?: currentUser
+                ?: members.firstOrNull()
+                ?: UserProfile("USR_1", "Roommate")
+        )
+    }
+    var selectedRotationMembers by remember {
+        mutableStateOf(
+            initialChore?.let { c ->
+                members.filter { c.rotationMemberIds.contains(it.id) }.ifEmpty { members }
+            } ?: members
+        )
+    }
+    var scheduledTime by remember { mutableStateOf(initialChore?.scheduledTime ?: "09:00 AM") }
+    var pointsText by remember { mutableStateOf(initialChore?.let { it.points.toString() } ?: "10") }
 
     var categoryExpanded by remember { mutableStateOf(false) }
     var assigneeExpanded by remember { mutableStateOf(false) }
@@ -400,21 +480,23 @@ fun AddChoreDialog(
         onDismissRequest = onDismiss,
         title = {
             Text(
-                text = "Add Household Chore Duty",
+                text = if (isEditing) "Edit Chore Task" else "Add Household Chore Duty",
                 style = MaterialTheme.typography.titleLarge,
                 fontWeight = FontWeight.Bold
             )
         },
         text = {
             Column(
-                modifier = Modifier.fillMaxWidth(),
-                verticalArrangement = Arrangement.spacedBy(12.dp)
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(14.dp)
             ) {
                 OutlinedTextField(
                     value = title,
                     onValueChange = { title = it },
-                    label = { Text("Chore Title") },
-                    placeholder = { Text("e.g. Sunday Hall Cleaning, Trash Disposal") },
+                    label = { Text("Chore Title *") },
+                    placeholder = { Text("e.g. Kitchen Cleaning, Trash Disposal") },
                     modifier = Modifier.fillMaxWidth(),
                     shape = RoundedCornerShape(12.dp),
                     singleLine = true
@@ -429,30 +511,137 @@ fun AddChoreDialog(
 
                 Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                     ChoreFrequencies.forEach { (freqKey, label) ->
+                        val isSelected = selectedFrequency == freqKey
                         Surface(
                             shape = RoundedCornerShape(10.dp),
-                            color = if (selectedFrequency == freqKey) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant,
+                            color = if (isSelected) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant,
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .clip(RoundedCornerShape(10.dp))
                                 .clickable { selectedFrequency = freqKey }
                         ) {
                             Row(
-                                modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+                                modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
                                 Icon(
-                                    imageVector = if (freqKey == "WEEKLY_SUNDAY_ROTATION") Icons.Default.CalendarMonth else Icons.Default.Repeat,
+                                    imageVector = if (freqKey.contains("ROTATION")) Icons.Default.SwapHoriz else Icons.Default.Repeat,
                                     contentDescription = null,
-                                    tint = if (selectedFrequency == freqKey) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                                    tint = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
                                     modifier = Modifier.size(18.dp)
                                 )
                                 Spacer(modifier = Modifier.width(8.dp))
                                 Text(
                                     text = label,
-                                    style = MaterialTheme.typography.labelSmall,
-                                    fontWeight = if (selectedFrequency == freqKey) FontWeight.Bold else FontWeight.Normal
+                                    style = MaterialTheme.typography.bodySmall,
+                                    fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal
                                 )
+                            }
+                        }
+                    }
+                }
+
+                // Daily Work Roster selection if rotation frequency is chosen
+                if (selectedFrequency.contains("ROTATION")) {
+                    Card(
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(12.dp),
+                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.08f))
+                    ) {
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(12.dp),
+                            verticalArrangement = Arrangement.spacedBy(10.dp)
+                        ) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Icon(
+                                    imageVector = Icons.Default.SwapHoriz,
+                                    contentDescription = null,
+                                    tint = MaterialTheme.colorScheme.primary,
+                                    modifier = Modifier.size(18.dp)
+                                )
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text(
+                                    text = "Daily Work Roster Members *",
+                                    style = MaterialTheme.typography.titleSmall,
+                                    fontWeight = FontWeight.Bold,
+                                    color = MaterialTheme.colorScheme.primary
+                                )
+                            }
+                            Text(
+                                text = "Select the flatmates participating in this daily task (at least 1 mandatory). The duty will automatically rotate daily in order.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                fontSize = 11.sp
+                            )
+
+                            // Roommate selection wrapped FlowRow (displays all 3+ roommates clearly)
+                            Text(
+                                text = "All flatmates (${members.size} available):",
+                                style = MaterialTheme.typography.labelSmall,
+                                fontWeight = FontWeight.SemiBold
+                            )
+
+                            FlowRow(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                verticalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                members.forEach { m ->
+                                    val isChecked = selectedRotationMembers.any { it.id == m.id }
+                                    Surface(
+                                        shape = RoundedCornerShape(8.dp),
+                                        color = if (isChecked) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surfaceVariant,
+                                        modifier = Modifier
+                                            .clip(RoundedCornerShape(8.dp))
+                                            .clickable {
+                                                selectedRotationMembers = if (isChecked) {
+                                                    // Keep at least 1 member mandatory
+                                                    if (selectedRotationMembers.size > 1) selectedRotationMembers.filter { it.id != m.id } else selectedRotationMembers
+                                                } else {
+                                                    selectedRotationMembers + m
+                                                }
+                                                if (selectedAssignee.id == m.id && isChecked && selectedRotationMembers.isNotEmpty()) {
+                                                    selectedAssignee = selectedRotationMembers.first()
+                                                }
+                                            }
+                                    ) {
+                                        Text(
+                                            text = "${if (isChecked) "✓ " else "+ "}${m.name}",
+                                            style = MaterialTheme.typography.labelSmall,
+                                            fontWeight = FontWeight.Bold,
+                                            color = if (isChecked) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurface,
+                                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp)
+                                        )
+                                    }
+                                }
+                            }
+
+                            // Live Rotation Sequence Preview
+                            if (selectedRotationMembers.isNotEmpty()) {
+                                Surface(
+                                    shape = RoundedCornerShape(8.dp),
+                                    color = MaterialTheme.colorScheme.surface,
+                                    modifier = Modifier.fillMaxWidth()
+                                ) {
+                                    Column(modifier = Modifier.padding(8.dp)) {
+                                        Text(
+                                            text = "🔄 Active Roster Sequence (${selectedRotationMembers.size} flatmates):",
+                                            style = MaterialTheme.typography.labelSmall,
+                                            fontWeight = FontWeight.Bold,
+                                            color = MaterialTheme.colorScheme.primary
+                                        )
+                                        Spacer(modifier = Modifier.height(4.dp))
+                                        val sequenceText = selectedRotationMembers.mapIndexed { idx, rm -> "Day ${idx + 1}: ${rm.name}" }.joinToString(" ➔ ")
+                                        Text(
+                                            text = sequenceText,
+                                            style = MaterialTheme.typography.bodySmall,
+                                            fontWeight = FontWeight.Medium,
+                                            color = MaterialTheme.colorScheme.onSurface
+                                        )
+                                    }
+                                }
                             }
                         }
                     }
@@ -490,7 +679,7 @@ fun AddChoreDialog(
                     }
                 }
 
-                // Assignee Dropdown
+                // Assignee Dropdown (Starting roommate)
                 ExposedDropdownMenuBox(
                     expanded = assigneeExpanded,
                     onExpandedChange = { assigneeExpanded = !assigneeExpanded }
@@ -499,7 +688,7 @@ fun AddChoreDialog(
                         value = selectedAssignee.name,
                         onValueChange = {},
                         readOnly = true,
-                        label = { Text(if (selectedFrequency == "WEEKLY_SUNDAY_ROTATION") "Starting Roommate" else "Assigned Roommate") },
+                        label = { Text(if (selectedFrequency.contains("ROTATION")) "Starting Roommate (Day 1) *" else "Assigned Roommate *") },
                         trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = assigneeExpanded) },
                         modifier = Modifier
                             .menuAnchor()
@@ -510,7 +699,8 @@ fun AddChoreDialog(
                         expanded = assigneeExpanded,
                         onDismissRequest = { assigneeExpanded = false }
                     ) {
-                        members.forEach { m ->
+                        val availableMembers = if (selectedFrequency.contains("ROTATION")) selectedRotationMembers else members
+                        availableMembers.forEach { m ->
                             DropdownMenuItem(
                                 text = { Text(m.name) },
                                 onClick = {
@@ -556,13 +746,18 @@ fun AddChoreDialog(
             Button(
                 onClick = {
                     if (title.isNotBlank()) {
+                        val rotationList = if (selectedFrequency.contains("ROTATION")) {
+                            listOf(selectedAssignee) + selectedRotationMembers.filter { it.id != selectedAssignee.id }
+                        } else {
+                            listOf(selectedAssignee)
+                        }
                         onConfirm(
                             title.trim(),
                             description.trim(),
                             selectedCategory,
                             selectedFrequency,
                             selectedAssignee,
-                            members, // Pass all household members for rotation
+                            rotationList,
                             scheduledTime.trim(),
                             1, // Sunday
                             1,
@@ -570,9 +765,10 @@ fun AddChoreDialog(
                         )
                     }
                 },
+                enabled = title.isNotBlank() && (!selectedFrequency.contains("ROTATION") || selectedRotationMembers.isNotEmpty()),
                 shape = RoundedCornerShape(12.dp)
             ) {
-                Text("Schedule Chore")
+                Text(if (isEditing) "Save Changes" else "Schedule Chore")
             }
         },
         dismissButton = {

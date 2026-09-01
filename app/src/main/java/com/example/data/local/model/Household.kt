@@ -10,7 +10,7 @@ data class Household(
     val inviteCode: String,
     val createdByUserId: String,
     val currencySymbol: String = "₹",
-    val monthlyBudgetLimit: Double = 35000.0,
+    val monthlyBudgetLimit: Double = 0.0,
     val budgetWarningThreshold: Int = 80, // Alert when expenses reach 80%
     val createdAt: Long = System.currentTimeMillis()
 )

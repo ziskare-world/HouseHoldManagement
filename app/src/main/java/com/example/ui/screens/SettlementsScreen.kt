@@ -28,6 +28,8 @@ import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.NotificationsActive
 import androidx.compose.material.icons.filled.OpenInNew
 import androidx.compose.material.icons.filled.Payment
+import androidx.compose.material.icons.filled.QrCodeScanner
+import androidx.compose.material.icons.filled.Storefront
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -45,6 +47,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -56,6 +59,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
@@ -64,21 +69,24 @@ import com.example.data.local.model.SettlementDebt
 import com.example.data.local.model.UserProfile
 import com.example.ui.components.UpiPaymentDialog
 import com.example.util.DateUtils
+import com.example.util.QrCameraScannerDialog
 
 @Composable
 fun SettlementsScreen(
     debts: List<SettlementDebt>,
     members: List<UserProfile>,
     currentUser: UserProfile?,
-    onPayViaUpi: (SettlementDebt, preferredApp: String?) -> Unit,
+    onPayViaUpi: (SettlementDebt, String?) -> Unit,
     onVerifyPayment: (SettlementDebt, Boolean) -> Unit,
     onRequestConfirmation: (SettlementDebt, String) -> Unit,
     onSendReminder: (SettlementDebt) -> Unit,
     onDeleteDebt: (String) -> Unit,
     onAddDebt: (fromUser: UserProfile, toUser: UserProfile, amount: Double, reason: String) -> Unit,
+    onPay3rdParty: ((payeeName: String, upiId: String, amount: Double, note: String, recordExpense: Boolean) -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
     var showAddDialog by remember { mutableStateOf(false) }
+    var showThirdPartyPayDialog by remember { mutableStateOf(false) }
     var selectedDebtForPayment by remember { mutableStateOf<SettlementDebt?>(null) }
     var filterTab by remember { mutableStateOf("PENDING") } // PENDING, SETTLED, ALL
 
@@ -190,6 +198,70 @@ fun SettlementsScreen(
                 }
             }
 
+            // Pay 3rd Party / Vendor Banner
+            item {
+                Card(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(18.dp))
+                        .clickable { showThirdPartyPayDialog = true },
+                    shape = RoundedCornerShape(18.dp),
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.5f)),
+                    elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(16.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.weight(1f)) {
+                            Surface(
+                                shape = RoundedCornerShape(12.dp),
+                                color = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.size(44.dp)
+                            ) {
+                                Box(contentAlignment = Alignment.Center) {
+                                    Icon(
+                                        imageVector = Icons.Default.QrCodeScanner,
+                                        contentDescription = null,
+                                        tint = MaterialTheme.colorScheme.onPrimary,
+                                        modifier = Modifier.size(24.dp)
+                                    )
+                                }
+                            }
+                            Spacer(modifier = Modifier.width(12.dp))
+                            Column {
+                                Text(
+                                    text = "Pay 3rd Party / Scan QR",
+                                    style = MaterialTheme.typography.titleMedium,
+                                    fontWeight = FontWeight.Bold,
+                                    color = MaterialTheme.colorScheme.onSurface
+                                )
+                                Text(
+                                    text = "Direct UPI transfer to Landlord, Maid, Cook or Bill",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                        }
+                        Surface(
+                            shape = RoundedCornerShape(8.dp),
+                            color = MaterialTheme.colorScheme.primary
+                        ) {
+                            Text(
+                                text = "PAY UPI",
+                                style = MaterialTheme.typography.labelSmall,
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.onPrimary,
+                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp)
+                            )
+                        }
+                    }
+                }
+            }
+
             // Filter Tabs
             item {
                 Row(
@@ -278,6 +350,29 @@ fun SettlementsScreen(
             onConfirm = { from, to, amount, reason ->
                 onAddDebt(from, to, amount, reason)
                 showAddDialog = false
+            }
+        )
+    }
+
+    if (showThirdPartyPayDialog) {
+        ThirdPartyPaymentDialog(
+            onDismiss = { showThirdPartyPayDialog = false },
+            onConfirm = { name, upi, amount, note, recordExpense ->
+                onPay3rdParty?.invoke(name, upi, amount, note, recordExpense)
+                // Also trigger UPI payment dialog / intent
+                val tempDebt = SettlementDebt(
+                    id = java.util.UUID.randomUUID().toString(),
+                    fromUserId = currentUser?.id ?: "",
+                    fromUserName = currentUser?.name ?: "Me",
+                    toUserId = "THIRD_PARTY",
+                    toUserName = name,
+                    toUserUpiId = upi,
+                    amount = amount,
+                    reason = note.ifBlank { "Payment to $name" },
+                    householdId = currentUser?.householdId ?: ""
+                )
+                selectedDebtForPayment = tempDebt
+                showThirdPartyPayDialog = false
             }
         )
     }
@@ -572,6 +667,160 @@ fun AddDebtDialog(
                 shape = RoundedCornerShape(12.dp)
             ) {
                 Text("Save Debt Record")
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text("Cancel")
+            }
+        }
+    )
+}
+
+@Composable
+fun ThirdPartyPaymentDialog(
+    onDismiss: () -> Unit,
+    onConfirm: (payeeName: String, upiId: String, amount: Double, note: String, recordExpense: Boolean) -> Unit
+) {
+    var payeeName by remember { mutableStateOf("") }
+    var upiId by remember { mutableStateOf("") }
+    var amountText by remember { mutableStateOf("") }
+    var note by remember { mutableStateOf("") }
+    var recordAsExpense by remember { mutableStateOf(true) }
+    var showQrScanner by remember { mutableStateOf(false) }
+
+    if (showQrScanner) {
+        QrCameraScannerDialog(
+            onDismiss = { showQrScanner = false },
+            onQrScanned = { scannedUpi, scannedName ->
+                upiId = scannedUpi
+                if (payeeName.isBlank() && scannedName.isNotBlank()) {
+                    payeeName = scannedName
+                }
+                showQrScanner = false
+            }
+        )
+    }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(
+                    imageVector = Icons.Default.Storefront,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.size(24.dp)
+                )
+                Spacer(modifier = Modifier.width(8.dp))
+                Text("Pay 3rd Party via UPI", fontWeight = FontWeight.Bold)
+            }
+        },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                // Quick Suggestion Chips
+                Text("Quick Selection:", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    val presets = listOf("Landlord", "Maid", "Cook", "Electricity", "Grocer")
+                    presets.forEach { preset ->
+                        Surface(
+                            shape = RoundedCornerShape(8.dp),
+                            color = if (payeeName == preset) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surfaceVariant,
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(8.dp))
+                                .clickable { payeeName = preset }
+                        ) {
+                            Text(
+                                text = preset,
+                                style = MaterialTheme.typography.labelSmall,
+                                fontWeight = FontWeight.Bold,
+                                color = if (payeeName == preset) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurface,
+                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                            )
+                        }
+                    }
+                }
+
+                OutlinedTextField(
+                    value = payeeName,
+                    onValueChange = { payeeName = it },
+                    label = { Text("Payee Name / Title *") },
+                    placeholder = { Text("e.g. House Owner, Cook Didi") },
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(12.dp),
+                    singleLine = true
+                )
+
+                OutlinedTextField(
+                    value = upiId,
+                    onValueChange = { upiId = it },
+                    label = { Text("Payee UPI ID *") },
+                    placeholder = { Text("e.g. landlord@okhdfcbank") },
+                    trailingIcon = {
+                        IconButton(onClick = { showQrScanner = true }) {
+                            Icon(
+                                imageVector = Icons.Default.QrCodeScanner,
+                                contentDescription = "Scan QR",
+                                tint = MaterialTheme.colorScheme.primary
+                            )
+                        }
+                    },
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(12.dp),
+                    singleLine = true
+                )
+
+                OutlinedTextField(
+                    value = amountText,
+                    onValueChange = { amountText = it },
+                    label = { Text("Amount (₹) *") },
+                    placeholder = { Text("0.00") },
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(12.dp),
+                    singleLine = true
+                )
+
+                OutlinedTextField(
+                    value = note,
+                    onValueChange = { note = it },
+                    label = { Text("Payment Note (Optional)") },
+                    placeholder = { Text("e.g. September Rent, Grocery bill") },
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(12.dp)
+                )
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Text(
+                        text = "Record as Shared Expense",
+                        style = MaterialTheme.typography.bodyMedium,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                    Switch(
+                        checked = recordAsExpense,
+                        onCheckedChange = { recordAsExpense = it }
+                    )
+                }
+            }
+        },
+        confirmButton = {
+            Button(
+                onClick = {
+                    val amount = amountText.toDoubleOrNull() ?: 0.0
+                    if (payeeName.isNotBlank() && upiId.isNotBlank() && amount > 0) {
+                        onConfirm(payeeName.trim(), upiId.trim(), amount, note.trim(), recordAsExpense)
+                    }
+                },
+                shape = RoundedCornerShape(12.dp)
+            ) {
+                Text("Proceed to UPI Pay")
             }
         },
         dismissButton = {

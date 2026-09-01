@@ -7,7 +7,7 @@ import androidx.room.PrimaryKey
 data class BudgetConfig(
     @PrimaryKey val monthYearKey: String, // e.g. "2026-08"
     val householdId: String,
-    val totalBudgetLimit: Double = 40000.0,
+    val totalBudgetLimit: Double = 0.0,
     val alertThresholdPercent: Int = 80, // Warning alert triggers at 80%
     val groceriesBudget: Double = 12000.0,
     val rentUtilitiesBudget: Double = 18000.0,

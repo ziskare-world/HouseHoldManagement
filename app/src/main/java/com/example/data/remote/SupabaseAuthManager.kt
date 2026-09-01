@@ -20,8 +20,8 @@ data class SupabaseUser(
     val email: String,
     val fullName: String = "",
     val upiId: String = "",
-    val householdId: String = "HOUSE_FLAT_402",
-    val householdName: String = "Flat 402 - Green View",
+    val householdId: String = "HOUSE_DEFAULT",
+    val householdName: String = "My Household",
     val accessToken: String = "",
     val refreshToken: String = "",
     val expiresAt: Long = 0L
@@ -77,8 +77,8 @@ class SupabaseAuthManager(private val context: Context) {
         val email = prefs.getString("user_email", null)
         val name = prefs.getString("user_name", "") ?: ""
         val upi = prefs.getString("user_upi", "") ?: ""
-        val householdId = prefs.getString("household_id", "HOUSE_FLAT_402") ?: "HOUSE_FLAT_402"
-        val householdName = prefs.getString("household_name", "Flat 402 - Green View") ?: "Flat 402 - Green View"
+        val householdId = prefs.getString("household_id", "HOUSE_DEFAULT") ?: "HOUSE_DEFAULT"
+        val householdName = prefs.getString("household_name", "My Household") ?: "My Household"
         val refreshToken = prefs.getString("refresh_token", "") ?: ""
         val expiresAt = prefs.getLong("expires_at", 0L)
 
@@ -242,8 +242,8 @@ class SupabaseAuthManager(private val context: Context) {
                     val metadata = userObj.optJSONObject("user_metadata")
                     val name = metadata?.optString("full_name", userEmail.substringBefore("@")) ?: userEmail.substringBefore("@")
                     val upi = metadata?.optString("upi_id", "") ?: ""
-                    val householdId = metadata?.optString("household_id", "HOUSE_FLAT_402") ?: "HOUSE_FLAT_402"
-                    val householdName = metadata?.optString("household_name", "Flat 402 - Green View") ?: "Flat 402 - Green View"
+                    val householdId = metadata?.optString("household_id", "HOUSE_DEFAULT") ?: "HOUSE_DEFAULT"
+                    val householdName = metadata?.optString("household_name", "My Household") ?: "My Household"
 
                     saveUserSession(
                         userId = userId,

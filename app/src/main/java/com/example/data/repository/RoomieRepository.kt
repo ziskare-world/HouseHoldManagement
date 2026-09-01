@@ -49,11 +49,11 @@ class RoomieRepository(
     fun getHousehold(householdId: String): Flow<Household?> =
         dao.getHousehold(householdId)
 
-    fun getAllExpenses(householdId: String): Flow<List<ExpenseItem>> =
-        dao.getAllExpenses(householdId)
+    fun getAllExpenses(householdId: String, currentUserId: String): Flow<List<ExpenseItem>> =
+        dao.getAllExpenses(householdId, currentUserId)
 
-    fun getExpensesByMonth(householdId: String, monthKey: String): Flow<List<ExpenseItem>> =
-        dao.getExpensesByMonth(householdId, monthKey)
+    fun getExpensesByMonth(householdId: String, monthKey: String, currentUserId: String): Flow<List<ExpenseItem>> =
+        dao.getExpensesByMonth(householdId, monthKey, currentUserId)
 
     fun getAllChores(householdId: String): Flow<List<ChoreTask>> =
         dao.getAllChores(householdId)
@@ -69,15 +69,41 @@ class RoomieRepository(
 
     // --- Clean Slate: Purge Legacy Sample Mock Data ---
     suspend fun purgeSampleMockDataIfPresent() {
+        val expenses = dao.getAllExpensesDirect()
+        val hasMockExpenses = expenses.any {
+            it.title.contains("Groceries & Supermarket") ||
+            it.title.contains("Fiber WiFi") ||
+            it.title.contains("Cleaning Supplies") ||
+            it.title.contains("Biryani") ||
+            it.notes.contains("DMart")
+        }
         val mockUser = dao.getCurrentUserDirect()
-        if (mockUser?.id == "USR_ALEX" || mockUser?.householdId == "HOUSE_FLAT_402") {
+        val mockHouseholdId = mockUser?.householdId ?: ""
+        val chores = dao.getAllChoresDirect(mockHouseholdId)
+        val hasMockChores = chores.any {
+            it.title.contains("Sunday Deep Cleaning") ||
+            it.title.contains("Kitchen Dishwashing") ||
+            it.title.contains("Trash Disposal") ||
+            it.assignedToUserName.contains("Rahul") ||
+            it.assignedToUserName.contains("Alex") ||
+            it.assignedToUserName.contains("Priya") ||
+            it.assignedToUserName.contains("Vikram")
+        }
+
+        if (hasMockExpenses || hasMockChores || mockUser?.id == "USR_ALEX" || mockUser?.householdId == "HOUSE_FLAT_402") {
             dao.clearAllExpenses()
             dao.clearAllChores()
             dao.clearAllDebts()
             dao.clearAllSavingsGoals()
+        }
+        if (mockUser?.id == "USR_ALEX" || mockUser?.householdId == "HOUSE_FLAT_402") {
             dao.clearAllUsers()
             dao.clearAllHouseholds()
         }
+    }
+
+    suspend fun clearAllChores() {
+        dao.clearAllChores()
     }
 
     suspend fun regenerateInviteCode(householdId: String): String {
@@ -133,19 +159,23 @@ class RoomieRepository(
         householdId: String,
         splitType: String,
         members: List<UserProfile>,
-        notes: String
+        notes: String,
+        dateMillis: Long = System.currentTimeMillis()
     ) {
-        val monthKey = DateUtils.getCurrentMonthYearKey()
+        val monthKey = DateUtils.getMonthYearKey(dateMillis)
         val expenseId = UUID.randomUUID().toString()
+        val splitUserIds = if (splitType == "CUSTOM") members.joinToString(",") { it.id } else ""
         val expense = ExpenseItem(
             id = expenseId,
             title = title,
             amount = amount,
             category = category,
+            dateMillis = dateMillis,
             monthYearKey = monthKey,
             paidByUserId = paidBy.id,
             paidByName = paidBy.name,
             splitType = splitType,
+            splitWithUserIds = splitUserIds,
             householdId = householdId,
             notes = notes
         )
@@ -156,9 +186,10 @@ class RoomieRepository(
             syncManager.dataStore.pushExpense(syncManager.supabaseUrl, syncManager.supabaseAnonKey, expense)
         }
 
-        // Automatically create settlement debts if split equally
-        if (splitType == "EQUAL" && members.isNotEmpty()) {
-            val perHeadAmount = amount / members.size
+        // Automatically create settlement debts for all participating split members (excluding payer)
+        if (splitType != "PERSONAL" && members.isNotEmpty()) {
+            val totalInvolved = if (members.any { it.id == paidBy.id }) members.size else (members.size + 1)
+            val perHeadAmount = amount / totalInvolved
             members.filter { it.id != paidBy.id }.forEach { member ->
                 val debt = SettlementDebt(
                     id = UUID.randomUUID().toString(),
@@ -177,6 +208,19 @@ class RoomieRepository(
                     syncManager.dataStore.pushDebt(syncManager.supabaseUrl, syncManager.supabaseAnonKey, debt)
                 }
             }
+        }
+    }
+
+    suspend fun updateExpense(
+        expense: ExpenseItem,
+        splitMembers: List<UserProfile> = emptyList()
+    ) {
+        val updatedExpense = expense.copy(
+            monthYearKey = DateUtils.getMonthYearKey(expense.dateMillis)
+        )
+        dao.updateExpense(updatedExpense)
+        backgroundScope.launch {
+            syncManager.dataStore.pushExpense(syncManager.supabaseUrl, syncManager.supabaseAnonKey, updatedExpense)
         }
     }
 
@@ -218,6 +262,13 @@ class RoomieRepository(
             points = points
         )
         dao.insertChore(chore)
+        backgroundScope.launch {
+            syncManager.dataStore.pushChore(syncManager.supabaseUrl, syncManager.supabaseAnonKey, chore)
+        }
+    }
+
+    suspend fun updateChore(chore: ChoreTask) {
+        dao.updateChore(chore)
         backgroundScope.launch {
             syncManager.dataStore.pushChore(syncManager.supabaseUrl, syncManager.supabaseAnonKey, chore)
         }
@@ -374,6 +425,20 @@ class RoomieRepository(
         dao.insertUser(user)
         backgroundScope.launch {
             syncManager.dataStore.pushUserProfile(syncManager.supabaseUrl, syncManager.supabaseAnonKey, user)
+        }
+    }
+
+    suspend fun updateRoommate(user: UserProfile) {
+        dao.insertUser(user)
+        backgroundScope.launch {
+            syncManager.dataStore.pushUserProfile(syncManager.supabaseUrl, syncManager.supabaseAnonKey, user)
+        }
+    }
+
+    suspend fun deleteRoommate(userId: String) {
+        dao.deleteUser(userId)
+        backgroundScope.launch {
+            syncManager.dataStore.deleteRecord(syncManager.supabaseUrl, syncManager.supabaseAnonKey, "user_profiles", userId)
         }
     }
 

@@ -15,6 +15,8 @@ object DateUtils {
 
     fun getCurrentMonthYearKey(): String = monthYearFormat.format(Date())
 
+    fun getMonthYearKey(millis: Long): String = monthYearFormat.format(Date(millis))
+
     fun formatDisplayDate(millis: Long): String = displayDateFormat.format(Date(millis))
 
     fun formatDisplayMonth(monthYearKey: String): String {

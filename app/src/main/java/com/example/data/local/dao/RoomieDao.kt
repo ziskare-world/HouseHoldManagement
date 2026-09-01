@@ -52,21 +52,30 @@ interface RoomieDao {
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertHousehold(household: Household)
 
-    // --- Expenses ---
-    @Query("SELECT * FROM expenses WHERE householdId = :householdId ORDER BY dateMillis DESC")
-    fun getAllExpenses(householdId: String): Flow<List<ExpenseItem>>
+    // --- Expenses (Personal expenses are private to the creator) ---
+    @Query("SELECT * FROM expenses WHERE householdId = :householdId AND (splitType != 'PERSONAL' OR paidByUserId = :currentUserId) ORDER BY dateMillis DESC")
+    fun getAllExpenses(householdId: String, currentUserId: String): Flow<List<ExpenseItem>>
 
-    @Query("SELECT * FROM expenses WHERE householdId = :householdId AND monthYearKey = :monthYearKey ORDER BY dateMillis DESC")
-    fun getExpensesByMonth(householdId: String, monthYearKey: String): Flow<List<ExpenseItem>>
+    @Query("SELECT * FROM expenses WHERE householdId = :householdId AND monthYearKey = :monthYearKey AND (splitType != 'PERSONAL' OR paidByUserId = :currentUserId) ORDER BY dateMillis DESC")
+    fun getExpensesByMonth(householdId: String, monthYearKey: String, currentUserId: String): Flow<List<ExpenseItem>>
 
-    @Query("SELECT * FROM expenses WHERE householdId = :householdId AND monthYearKey = :monthYearKey ORDER BY dateMillis DESC")
-    suspend fun getExpensesByMonthDirect(householdId: String, monthYearKey: String): List<ExpenseItem>
+    @Query("SELECT * FROM expenses ORDER BY dateMillis DESC")
+    suspend fun getAllExpensesDirect(): List<ExpenseItem>
+
+    @Query("SELECT * FROM expenses WHERE householdId = :householdId AND monthYearKey = :monthYearKey AND (splitType != 'PERSONAL' OR paidByUserId = :currentUserId) ORDER BY dateMillis DESC")
+    suspend fun getExpensesByMonthDirect(householdId: String, monthYearKey: String, currentUserId: String): List<ExpenseItem>
+
+    @Query("SELECT * FROM expenses WHERE id = :expenseId LIMIT 1")
+    suspend fun getExpenseById(expenseId: String): ExpenseItem?
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertExpense(expense: ExpenseItem)
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertExpenses(expenses: List<ExpenseItem>)
+
+    @Update
+    suspend fun updateExpense(expense: ExpenseItem)
 
     @Query("DELETE FROM expenses WHERE id = :expenseId")
     suspend fun deleteExpense(expenseId: String)
@@ -90,7 +99,7 @@ interface RoomieDao {
     @Query("UPDATE chore_tasks SET status = :status, lastCompletedDate = :date WHERE id = :choreId")
     suspend fun updateChoreStatus(choreId: String, status: String, date: String)
 
-    @Query("UPDATE chore_tasks SET rotationIndex = :newIndex, assignedToUserId = :userId, assignedToUserName = :userName WHERE id = :choreId")
+    @Query("UPDATE chore_tasks SET rotationIndex = :newIndex, assignedToUserId = :userId, assignedToUserName = :userName, status = 'PENDING' WHERE id = :choreId")
     suspend fun advanceChoreRotation(choreId: String, newIndex: Int, userId: String, userName: String)
 
     @Query("DELETE FROM chore_tasks WHERE id = :choreId")

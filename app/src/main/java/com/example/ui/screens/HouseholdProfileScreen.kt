@@ -33,11 +33,13 @@ import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Cloud
 import androidx.compose.material.icons.filled.CloudSync
 import androidx.compose.material.icons.filled.ContentCopy
+import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Group
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.Payments
 import androidx.compose.material.icons.filled.QrCode
+import androidx.compose.material.icons.filled.QrCodeScanner
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Share
@@ -49,6 +51,11 @@ import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.ExposedDropdownMenuBox
+import androidx.compose.material3.ExposedDropdownMenuDefaults
+import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -82,6 +89,7 @@ import com.example.data.remote.SupabaseAuthState
 import com.example.data.remote.SupabaseSyncManager
 import com.example.ui.components.SupabaseAuthDialog
 import com.example.ui.components.SupabaseSchemaDialog
+import com.example.util.QrCameraScannerDialog
 import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -95,6 +103,8 @@ fun HouseholdProfileScreen(
     syncManager: SupabaseSyncManager,
     onUpdateProfile: (name: String, upiId: String, email: String) -> Unit,
     onAddRoommate: (name: String, email: String, upiId: String, colorHex: String) -> Unit,
+    onUpdateRoommate: ((UserProfile) -> Unit)? = null,
+    onDeleteRoommate: ((userId: String, userName: String) -> Unit)? = null,
     onJoinHousehold: (code: String, name: String) -> Unit,
     onRegenerateCode: (() -> Unit)? = null,
     onUpdateHouseholdAndBudget: ((name: String, budget: Double, threshold: Int) -> Unit)? = null,
@@ -113,6 +123,8 @@ fun HouseholdProfileScreen(
     var showEditProfileDialog by remember { mutableStateOf(false) }
     var showEditHouseholdDialog by remember { mutableStateOf(false) }
     var showAddRoommateDialog by remember { mutableStateOf(false) }
+    var editingRoommate by remember { mutableStateOf<UserProfile?>(null) }
+    var deletingRoommate by remember { mutableStateOf<UserProfile?>(null) }
     var showJoinHouseholdDialog by remember { mutableStateOf(false) }
     var showSupabaseConfigDialog by remember { mutableStateOf(false) }
     var showAuthDialog by remember { mutableStateOf(false) }
@@ -428,14 +440,16 @@ fun HouseholdProfileScreen(
             }
         }
 
-        // Roommates in Household Section Header
+        // Roommates Header & Full-Width Add Button
         item {
-            Row(
+            Column(
                 modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
+                verticalArrangement = Arrangement.spacedBy(10.dp)
             ) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
                     Icon(
                         imageVector = Icons.Default.Group,
                         contentDescription = null,
@@ -451,12 +465,14 @@ fun HouseholdProfileScreen(
 
                 Button(
                     onClick = { showAddRoommateDialog = true },
-                    shape = RoundedCornerShape(12.dp),
-                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp)
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(48.dp),
+                    shape = RoundedCornerShape(12.dp)
                 ) {
-                    Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(16.dp))
-                    Spacer(modifier = Modifier.width(4.dp))
-                    Text("Add Roommate", fontSize = 12.sp)
+                    Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(18.dp))
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text("Add Roommate", fontWeight = FontWeight.Bold, fontSize = 14.sp)
                 }
             }
         }
@@ -588,6 +604,35 @@ fun HouseholdProfileScreen(
                                             fontFamily = FontFamily.Monospace
                                         )
                                     }
+                                }
+                            }
+                        }
+
+                        // Roommate Action Buttons (Edit & Delete)
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            IconButton(
+                                onClick = { editingRoommate = member },
+                                modifier = Modifier.size(36.dp)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Edit,
+                                    contentDescription = "Edit Details",
+                                    tint = MaterialTheme.colorScheme.primary,
+                                    modifier = Modifier.size(18.dp)
+                                )
+                            }
+
+                            if (!member.isCurrentUser) {
+                                IconButton(
+                                    onClick = { deletingRoommate = member },
+                                    modifier = Modifier.size(36.dp)
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.Delete,
+                                        contentDescription = "Remove Roommate",
+                                        tint = MaterialTheme.colorScheme.error.copy(alpha = 0.7f),
+                                        modifier = Modifier.size(18.dp)
+                                    )
                                 }
                             }
                         }
@@ -852,7 +897,7 @@ fun HouseholdProfileScreen(
     // 2. Edit Household & Budget Dialog
     if (showEditHouseholdDialog) {
         var hName by remember { mutableStateOf(household?.name ?: currentUser?.householdName ?: "") }
-        var budgetText by remember { mutableStateOf((household?.monthlyBudgetLimit ?: 30000.0).toInt().toString()) }
+        var budgetText by remember { mutableStateOf((household?.monthlyBudgetLimit ?: 0.0).toInt().toString()) }
         var thresholdText by remember { mutableStateOf((household?.budgetWarningThreshold ?: 80).toString()) }
 
         AlertDialog(
@@ -892,7 +937,7 @@ fun HouseholdProfileScreen(
             confirmButton = {
                 Button(
                     onClick = {
-                        val budget = budgetText.toDoubleOrNull() ?: 30000.0
+                        val budget = budgetText.toDoubleOrNull() ?: 0.0
                         val threshold = thresholdText.toIntOrNull() ?: 80
                         onUpdateHouseholdAndBudget?.invoke(hName.trim().ifBlank { "My Household" }, budget, threshold)
                         showEditHouseholdDialog = false
@@ -916,8 +961,23 @@ fun HouseholdProfileScreen(
         var roommateEmail by remember { mutableStateOf("") }
         var roommateUpi by remember { mutableStateOf("") }
         var selectedColor by remember { mutableStateOf("#3B82F6") }
+        var showQrScanner by remember { mutableStateOf(false) }
 
         val colors = listOf("#3B82F6", "#EC4899", "#F59E0B", "#8B5CF6", "#10B981", "#EF4444")
+
+        if (showQrScanner) {
+            QrCameraScannerDialog(
+                onDismiss = { showQrScanner = false },
+                onQrScanned = { scannedUpi, scannedName ->
+                    roommateUpi = scannedUpi
+                    if (roommateName.isBlank() && scannedName.isNotBlank()) {
+                        roommateName = scannedName
+                    }
+                    showQrScanner = false
+                    Toast.makeText(context, "UPI ID scanned: $scannedUpi", Toast.LENGTH_SHORT).show()
+                }
+            )
+        }
 
         AlertDialog(
             onDismissRequest = { showAddRoommateDialog = false },
@@ -936,7 +996,7 @@ fun HouseholdProfileScreen(
                     OutlinedTextField(
                         value = roommateEmail,
                         onValueChange = { roommateEmail = it },
-                        label = { Text("Email (Optional)") },
+                        label = { Text("Email / Phone (Optional)") },
                         placeholder = { Text("priya@example.com") },
                         modifier = Modifier.fillMaxWidth(),
                         shape = RoundedCornerShape(12.dp),
@@ -947,6 +1007,15 @@ fun HouseholdProfileScreen(
                         onValueChange = { roommateUpi = it },
                         label = { Text("UPI ID (For Payments)") },
                         placeholder = { Text("priya@okhdfcbank") },
+                        trailingIcon = {
+                            IconButton(onClick = { showQrScanner = true }) {
+                                Icon(
+                                    imageVector = Icons.Default.QrCodeScanner,
+                                    contentDescription = "Scan UPI QR",
+                                    tint = MaterialTheme.colorScheme.primary
+                                )
+                            }
+                        },
                         modifier = Modifier.fillMaxWidth(),
                         shape = RoundedCornerShape(12.dp),
                         singleLine = true
@@ -1006,6 +1075,160 @@ fun HouseholdProfileScreen(
         )
     }
 
+    // 3b. Edit Roommate Dialog
+    editingRoommate?.let { memberToEdit ->
+        var editName by remember(memberToEdit) { mutableStateOf(memberToEdit.name) }
+        var editEmail by remember(memberToEdit) { mutableStateOf(memberToEdit.email) }
+        var editUpi by remember(memberToEdit) { mutableStateOf(memberToEdit.upiId) }
+        var editColor by remember(memberToEdit) { mutableStateOf(memberToEdit.avatarColorHex) }
+        var showEditQrScanner by remember { mutableStateOf(false) }
+
+        val colors = listOf("#3B82F6", "#EC4899", "#F59E0B", "#8B5CF6", "#10B981", "#EF4444")
+
+        if (showEditQrScanner) {
+            QrCameraScannerDialog(
+                onDismiss = { showEditQrScanner = false },
+                onQrScanned = { scannedUpi, scannedName ->
+                    editUpi = scannedUpi
+                    if (editName.isBlank() && scannedName.isNotBlank()) {
+                        editName = scannedName
+                    }
+                    showEditQrScanner = false
+                    Toast.makeText(context, "UPI ID scanned: $scannedUpi", Toast.LENGTH_SHORT).show()
+                }
+            )
+        }
+
+        AlertDialog(
+            onDismissRequest = { editingRoommate = null },
+            title = { Text("Edit Roommate Details", fontWeight = FontWeight.Bold) },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    OutlinedTextField(
+                        value = editName,
+                        onValueChange = { editName = it },
+                        label = { Text("Roommate Name *") },
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(12.dp),
+                        singleLine = true
+                    )
+                    OutlinedTextField(
+                        value = editEmail,
+                        onValueChange = { editEmail = it },
+                        label = { Text("Email / Phone") },
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(12.dp),
+                        singleLine = true
+                    )
+                    OutlinedTextField(
+                        value = editUpi,
+                        onValueChange = { editUpi = it },
+                        label = { Text("UPI ID (For Payments)") },
+                        trailingIcon = {
+                            IconButton(onClick = { showEditQrScanner = true }) {
+                                Icon(
+                                    imageVector = Icons.Default.QrCodeScanner,
+                                    contentDescription = "Scan UPI QR",
+                                    tint = MaterialTheme.colorScheme.primary
+                                )
+                            }
+                        },
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(12.dp),
+                        singleLine = true
+                    )
+
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Text(
+                        text = "Avatar Color",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        colors.forEach { hex ->
+                            val color = Color(android.graphics.Color.parseColor(hex))
+                            Box(
+                                modifier = Modifier
+                                    .size(36.dp)
+                                    .clip(CircleShape)
+                                    .background(color)
+                                    .clickable { editColor = hex },
+                                contentAlignment = Alignment.Center
+                            ) {
+                                if (editColor == hex) {
+                                    Icon(
+                                        imageVector = Icons.Default.CheckCircle,
+                                        contentDescription = "Selected",
+                                        tint = Color.White,
+                                        modifier = Modifier.size(20.dp)
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        if (editName.isNotBlank()) {
+                            val updated = memberToEdit.copy(
+                                name = editName.trim(),
+                                email = editEmail.trim(),
+                                upiId = editUpi.trim(),
+                                avatarColorHex = editColor
+                            )
+                            onUpdateRoommate?.invoke(updated)
+                            editingRoommate = null
+                        }
+                    },
+                    shape = RoundedCornerShape(12.dp)
+                ) {
+                    Text("Save Changes")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { editingRoommate = null }) {
+                    Text("Cancel")
+                }
+            }
+        )
+    }
+
+    // 3c. Delete Roommate Dialog
+    deletingRoommate?.let { memberToDelete ->
+        AlertDialog(
+            onDismissRequest = { deletingRoommate = null },
+            title = { Text("Remove Roommate", fontWeight = FontWeight.Bold) },
+            text = {
+                Text(
+                    text = "Are you sure you want to remove ${memberToDelete.name} from this household? They will no longer appear in chore rotations and shared split ledgers.",
+                    style = MaterialTheme.typography.bodyMedium
+                )
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        onDeleteRoommate?.invoke(memberToDelete.id, memberToDelete.name)
+                        deletingRoommate = null
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error),
+                    shape = RoundedCornerShape(12.dp)
+                ) {
+                    Text("Remove", color = MaterialTheme.colorScheme.onError)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { deletingRoommate = null }) {
+                    Text("Cancel")
+                }
+            }
+        )
+    }
+
     // 4. Switch or Join Household Dialog
     if (showJoinHouseholdDialog) {
         var inviteCode by remember { mutableStateOf("") }
@@ -1029,7 +1252,7 @@ fun HouseholdProfileScreen(
                         value = inviteCode,
                         onValueChange = { inviteCode = it.uppercase() },
                         label = { Text("Invite Code") },
-                        placeholder = { Text("e.g. FLAT402") },
+                        placeholder = { Text("e.g. SKY302") },
                         modifier = Modifier.fillMaxWidth(),
                         shape = RoundedCornerShape(12.dp),
                         singleLine = true
@@ -1039,7 +1262,7 @@ fun HouseholdProfileScreen(
                         value = householdName,
                         onValueChange = { householdName = it },
                         label = { Text("Household Nickname (Optional)") },
-                        placeholder = { Text("e.g. Green View Flat 402") },
+                        placeholder = { Text("e.g. Dream House, Flat 101") },
                         modifier = Modifier.fillMaxWidth(),
                         shape = RoundedCornerShape(12.dp),
                         singleLine = true

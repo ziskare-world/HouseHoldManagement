@@ -76,8 +76,8 @@ fun SupabaseAuthDialog(
     var password by remember { mutableStateOf("") }
     var fullName by remember { mutableStateOf("") }
     var upiId by remember { mutableStateOf("") }
-    var householdCode by remember { mutableStateOf("FLAT402") }
-    var householdName by remember { mutableStateOf("Flat 402 - Green View") }
+    var householdCode by remember { mutableStateOf("") }
+    var householdName by remember { mutableStateOf("") }
     var passwordVisible by remember { mutableStateOf(false) }
 
     var isLoading by remember { mutableStateOf(false) }

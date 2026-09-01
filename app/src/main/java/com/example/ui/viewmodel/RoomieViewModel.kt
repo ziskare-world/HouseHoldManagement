@@ -16,11 +16,15 @@ import com.example.data.repository.RoomieRepository
 import com.example.notification.ChoreNotificationHelper
 import com.example.util.DateUtils
 import com.example.util.UpiPaymentHelper
+import com.example.util.NetworkConnectivityObserver
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 
@@ -40,12 +44,15 @@ data class BudgetStatus(
     val percentUsed: Int,
     val isWarning: Boolean,
     val isOverBudget: Boolean,
-    val remainingBudget: Double
+    val remainingBudget: Double,
+    val warningThreshold: Int = 80
 )
 
+@OptIn(ExperimentalCoroutinesApi::class)
 class RoomieViewModel(application: Application) : AndroidViewModel(application) {
     val repository = RoomieRepository.getInstance(application)
     private val context = application.applicationContext
+    val connectivityObserver = NetworkConnectivityObserver(application)
 
     private val sessionPrefs = application.getSharedPreferences("roomie_session_prefs", android.content.Context.MODE_PRIVATE)
 
@@ -68,10 +75,98 @@ class RoomieViewModel(application: Application) : AndroidViewModel(application) 
 
     val authState: StateFlow<SupabaseAuthState> = repository.syncManager.authManager.authState
 
+    val currentUser: StateFlow<UserProfile?> = repository.currentUser
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), null)
+
+    val householdMembers: StateFlow<List<UserProfile>> = currentUser
+        .flatMapLatest { user ->
+            val hid = user?.householdId ?: ""
+            if (hid.isNotBlank()) repository.getHouseholdMembers(hid) else flowOf(emptyList())
+        }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    val household: StateFlow<Household?> = currentUser
+        .flatMapLatest { user ->
+            val hid = user?.householdId ?: ""
+            if (hid.isNotBlank()) repository.getHousehold(hid) else flowOf(null)
+        }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), null)
+
+    val allExpenses: StateFlow<List<ExpenseItem>> = currentUser
+        .flatMapLatest { user ->
+            val hid = user?.householdId ?: ""
+            val uid = user?.id ?: ""
+            if (hid.isNotBlank()) repository.getAllExpenses(hid, uid) else flowOf(emptyList())
+        }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    val allChores: StateFlow<List<ChoreTask>> = currentUser
+        .flatMapLatest { user ->
+            val hid = user?.householdId ?: ""
+            if (hid.isNotBlank()) repository.getAllChores(hid) else flowOf(emptyList())
+        }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    val settlementDebts: StateFlow<List<SettlementDebt>> = currentUser
+        .flatMapLatest { user ->
+            val hid = user?.householdId ?: ""
+            if (hid.isNotBlank()) repository.getSettlementDebts(hid) else flowOf(emptyList())
+        }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    val savingsGoals: StateFlow<List<SavingsGoal>> = currentUser
+        .flatMapLatest { user ->
+            val hid = user?.householdId ?: ""
+            if (hid.isNotBlank()) repository.getSavingsGoals(hid) else flowOf(emptyList())
+        }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    val currentBudgetConfig: StateFlow<BudgetConfig?> = currentUser
+        .flatMapLatest { user ->
+            val hid = user?.householdId ?: ""
+            val curMonth = DateUtils.getCurrentMonthYearKey()
+            if (hid.isNotBlank()) repository.getBudgetConfig(curMonth, hid) else flowOf(null)
+        }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), null)
+
+    val budgetStatus: StateFlow<BudgetStatus> = combine(allExpenses, currentBudgetConfig, household) { expenses, budgetConfig, householdObj ->
+        val curMonth = DateUtils.getCurrentMonthYearKey()
+        val monthExpenses = expenses.filter { it.monthYearKey == curMonth }
+        val totalSpent = monthExpenses.sumOf { it.amount }
+        val limit = budgetConfig?.totalBudgetLimit ?: householdObj?.monthlyBudgetLimit ?: 0.0
+        val threshold = budgetConfig?.alertThresholdPercent ?: householdObj?.budgetWarningThreshold ?: 80
+        val percent = if (limit > 0) ((totalSpent / limit) * 100).toInt() else 0
+        val isWarning = limit > 0 && percent >= threshold && percent <= 100
+        val isOver = limit > 0 && percent > 100
+
+        BudgetStatus(
+            totalSpent = totalSpent,
+            budgetLimit = limit,
+            percentUsed = percent,
+            isWarning = isWarning,
+            isOverBudget = isOver,
+            remainingBudget = if (limit > 0) (limit - totalSpent).coerceAtLeast(0.0) else 0.0,
+            warningThreshold = threshold
+        )
+    }.stateIn(
+        viewModelScope,
+        SharingStarted.WhileSubscribed(5000),
+        BudgetStatus(0.0, 0.0, 0, false, false, 0.0, 80)
+    )
+
     init {
         ChoreNotificationHelper.createNotificationChannels(context)
         viewModelScope.launch {
             repository.purgeSampleMockDataIfPresent()
+        }
+
+        // Automatic realtime sync when network is connected / reconnected
+        viewModelScope.launch {
+            connectivityObserver.isOnline.collect { online ->
+                if (online && isLoggedIn.value) {
+                    syncWithSupabase()
+                }
+            }
         }
     }
 
@@ -100,64 +195,6 @@ class RoomieViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
-    val currentUser: StateFlow<UserProfile?> = repository.currentUser
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), null)
-
-    val householdMembers: StateFlow<List<UserProfile>> = repository.currentUser
-        .combine(repository.currentUser) { user, _ ->
-            user?.householdId ?: "HOUSE_FLAT_402"
-        }
-        .combine(repository.currentUser) { hid, _ -> hid }
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), "HOUSE_FLAT_402")
-        .let { _ ->
-            repository.getHouseholdMembers("HOUSE_FLAT_402")
-                .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
-        }
-
-    val household: StateFlow<Household?> = repository.getHousehold("HOUSE_FLAT_402")
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), null)
-
-    val allExpenses: StateFlow<List<ExpenseItem>> = repository.getAllExpenses("HOUSE_FLAT_402")
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
-
-    val allChores: StateFlow<List<ChoreTask>> = repository.getAllChores("HOUSE_FLAT_402")
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
-
-    val settlementDebts: StateFlow<List<SettlementDebt>> = repository.getSettlementDebts("HOUSE_FLAT_402")
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
-
-    val savingsGoals: StateFlow<List<SavingsGoal>> = repository.getSavingsGoals("HOUSE_FLAT_402")
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
-
-    val currentBudgetConfig: StateFlow<BudgetConfig?> = repository.getBudgetConfig(DateUtils.getCurrentMonthYearKey(), "HOUSE_FLAT_402")
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), null)
-
-    val budgetStatus: StateFlow<BudgetStatus> = allExpenses
-        .combine(currentBudgetConfig) { expenses, budgetConfig ->
-            val curMonth = DateUtils.getCurrentMonthYearKey()
-            val monthExpenses = expenses.filter { it.monthYearKey == curMonth }
-            val totalSpent = monthExpenses.sumOf { it.amount }
-            val limit = budgetConfig?.totalBudgetLimit ?: 35000.0
-            val percent = if (limit > 0) ((totalSpent / limit) * 100).toInt() else 0
-            val threshold = budgetConfig?.alertThresholdPercent ?: 80
-            val isWarning = percent >= threshold && percent <= 100
-            val isOver = percent > 100
-
-            BudgetStatus(
-                totalSpent = totalSpent,
-                budgetLimit = limit,
-                percentUsed = percent,
-                isWarning = isWarning,
-                isOverBudget = isOver,
-                remainingBudget = (limit - totalSpent).coerceAtLeast(0.0)
-            )
-        }
-        .stateIn(
-            viewModelScope,
-            SharingStarted.WhileSubscribed(5000),
-            BudgetStatus(0.0, 35000.0, 0, false, false, 35000.0)
-        )
-
     fun selectTab(tab: ScreenTab) {
         _currentTab.value = tab
     }
@@ -177,11 +214,13 @@ class RoomieViewModel(application: Application) : AndroidViewModel(application) 
         category: String,
         paidBy: UserProfile,
         splitType: String,
-        notes: String
+        splitWithMembers: List<UserProfile> = emptyList(),
+        notes: String,
+        dateMillis: Long = System.currentTimeMillis()
     ) {
         viewModelScope.launch {
             val user = currentUser.value ?: return@launch
-            val members = householdMembers.value
+            val effectiveMembers = if (splitType == "EQUAL") householdMembers.value else splitWithMembers
             repository.addExpense(
                 title = title,
                 amount = amount,
@@ -189,33 +228,48 @@ class RoomieViewModel(application: Application) : AndroidViewModel(application) 
                 paidBy = paidBy,
                 householdId = user.householdId,
                 splitType = splitType,
-                members = members,
-                notes = notes
+                members = effectiveMembers,
+                notes = notes,
+                dateMillis = dateMillis
             )
-            _statusMessage.value = "Added expense of ₹$amount for $title"
+            _statusMessage.value = "Added expense of ₹${amount.toInt()} for $title"
 
             // Check budget alert
             val budget = currentBudgetConfig.value
-            val limit = budget?.totalBudgetLimit ?: 35000.0
-            val curMonth = DateUtils.getCurrentMonthYearKey()
-            val curTotal = allExpenses.value.filter { it.monthYearKey == curMonth }.sumOf { it.amount } + amount
-            val percent = ((curTotal / limit) * 100).toInt()
+            val limit = budget?.totalBudgetLimit ?: household.value?.monthlyBudgetLimit ?: 0.0
+            if (limit > 0) {
+                val curMonth = DateUtils.getCurrentMonthYearKey()
+                val curTotal = allExpenses.value.filter { it.monthYearKey == curMonth }.sumOf { it.amount } + amount
+                val percent = ((curTotal / limit) * 100).toInt()
+                val threshold = budget?.alertThresholdPercent ?: household.value?.budgetWarningThreshold ?: 80
 
-            if (percent >= 100) {
-                ChoreNotificationHelper.showBudgetAlert(
-                    context,
-                    1001,
-                    "🚨 Monthly Budget Exceeded!",
-                    "Warning: Total spending reached ₹$curTotal which exceeds the ₹$limit limit ($percent%)!"
-                )
-            } else if (percent >= (budget?.alertThresholdPercent ?: 80)) {
-                ChoreNotificationHelper.showBudgetAlert(
-                    context,
-                    1002,
-                    "⚠️ Approaching Monthly Budget Limit",
-                    "Caution: You have used $percent% of your ₹$limit monthly budget."
-                )
+                if (percent >= 100) {
+                    ChoreNotificationHelper.showBudgetAlert(
+                        context,
+                        1001,
+                        "🚨 Monthly Budget Exceeded!",
+                        "Warning: Total spending reached ₹${curTotal.toInt()} which exceeds the ₹${limit.toInt()} limit ($percent%)!"
+                    )
+                } else if (percent >= threshold) {
+                    ChoreNotificationHelper.showBudgetAlert(
+                        context,
+                        1002,
+                        "⚠️ Approaching Monthly Budget Limit",
+                        "Caution: You have used $percent% of your ₹${limit.toInt()} monthly budget."
+                    )
+                }
             }
+        }
+    }
+
+    fun updateExpense(
+        expense: ExpenseItem,
+        splitWithMembers: List<UserProfile> = emptyList()
+    ) {
+        viewModelScope.launch {
+            val effectiveMembers = if (expense.splitType == "EQUAL") householdMembers.value else splitWithMembers
+            repository.updateExpense(expense, effectiveMembers)
+            _statusMessage.value = "Updated expense: ${expense.title}"
         }
     }
 
@@ -258,16 +312,23 @@ class RoomieViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
+    fun updateChore(chore: ChoreTask) {
+        viewModelScope.launch {
+            repository.updateChore(chore)
+            _statusMessage.value = "Updated chore: ${chore.title}"
+        }
+    }
+
     fun toggleChoreCompletion(chore: ChoreTask) {
         viewModelScope.launch {
             val newStatus = if (chore.status == "COMPLETED") "PENDING" else "COMPLETED"
             repository.updateChoreStatus(chore.id, newStatus)
 
-            // If Sunday-to-Sunday weekly rotating chore was completed, advance rotation
-            if (newStatus == "COMPLETED" && chore.frequency == "WEEKLY_SUNDAY_ROTATION") {
+            // If rotating chore (Daily rotation or Sunday rotation) was completed, advance rotation
+            if (newStatus == "COMPLETED" && (chore.rotationMemberIds.isNotBlank() || chore.frequency.contains("ROTATION"))) {
                 val members = householdMembers.value
                 repository.advanceChoreRotation(chore, members)
-                _statusMessage.value = "Sunday chore completed! Shift rotated to the next roommate."
+                _statusMessage.value = "Chore completed! Duty rotated to next roommate in line."
             } else {
                 _statusMessage.value = if (newStatus == "COMPLETED") "Chore marked completed! (+${chore.points} pts)" else "Chore marked pending"
             }
@@ -385,15 +446,10 @@ class RoomieViewModel(application: Application) : AndroidViewModel(application) 
     fun updateMonthlyBudget(newLimit: Double, thresholdPercent: Int) {
         viewModelScope.launch {
             val user = currentUser.value ?: return@launch
-            val curMonth = DateUtils.getCurrentMonthYearKey()
-            val config = BudgetConfig(
-                monthYearKey = curMonth,
-                householdId = user.householdId,
-                totalBudgetLimit = newLimit,
-                alertThresholdPercent = thresholdPercent
-            )
-            repository.updateBudgetConfig(config)
-            _statusMessage.value = "Budget limit set to ₹$newLimit (Alert at $thresholdPercent%)"
+            val household = repository.dao.getHouseholdDirect(user.householdId)
+            val hName = household?.name ?: user.householdName
+            repository.updateHouseholdDetailsAndBudget(user.householdId, hName, newLimit, thresholdPercent)
+            _statusMessage.value = "Budget limit set to ₹${newLimit.toInt()} (Alert at $thresholdPercent%)"
         }
     }
 
@@ -403,6 +459,20 @@ class RoomieViewModel(application: Application) : AndroidViewModel(application) 
             val user = currentUser.value ?: return@launch
             repository.addRoommate(name, email, upiId, user.householdId, colorHex)
             _statusMessage.value = "Roommate $name added to household"
+        }
+    }
+
+    fun updateRoommate(user: UserProfile) {
+        viewModelScope.launch {
+            repository.updateRoommate(user)
+            _statusMessage.value = "Updated details for ${user.name}"
+        }
+    }
+
+    fun deleteRoommate(userId: String, userName: String) {
+        viewModelScope.launch {
+            repository.deleteRoommate(userId)
+            _statusMessage.value = "Removed $userName from household"
         }
     }
 

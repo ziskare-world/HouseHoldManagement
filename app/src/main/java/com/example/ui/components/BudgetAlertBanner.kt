@@ -48,6 +48,10 @@ fun BudgetAlertBanner(
     onAdjustBudgetClick: () -> Unit,
     modifier: Modifier = Modifier
 ) {
+    if (!budgetStatus.isOverBudget && !budgetStatus.isWarning) {
+        return // Limit is set and on track - hide the white box with Adjust Limit
+    }
+
     val style = when {
         budgetStatus.isOverBudget -> {
             BannerStyle(
@@ -58,22 +62,13 @@ fun BudgetAlertBanner(
                 message = "You have spent ${DateUtils.formatCurrency(budgetStatus.totalSpent)} which exceeds your limit of ${DateUtils.formatCurrency(budgetStatus.budgetLimit)} (${budgetStatus.percentUsed}% used)."
             )
         }
-        budgetStatus.isWarning -> {
+        else -> {
             BannerStyle(
                 bgColor = Color(0xFFFFFBEB),
                 iconColor = Color(0xFFF59E0B),
                 icon = Icons.Default.WarningAmber,
                 title = "⚠️ Automated Budget Warning",
                 message = "You have used ${budgetStatus.percentUsed}% of your monthly limit (${DateUtils.formatCurrency(budgetStatus.totalSpent)} / ${DateUtils.formatCurrency(budgetStatus.budgetLimit)})."
-            )
-        }
-        else -> {
-            BannerStyle(
-                bgColor = Color(0xFFECFDF5),
-                iconColor = Color(0xFF10B981),
-                icon = Icons.Default.CheckCircle,
-                title = "✅ Monthly Budget On Track",
-                message = "Spent ${DateUtils.formatCurrency(budgetStatus.totalSpent)} of ${DateUtils.formatCurrency(budgetStatus.budgetLimit)} (${budgetStatus.percentUsed}% used). Safe zone!"
             )
         }
     }

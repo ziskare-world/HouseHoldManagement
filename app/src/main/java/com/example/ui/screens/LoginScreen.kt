@@ -111,8 +111,8 @@ fun LoginScreen(
     var password by remember { mutableStateOf("") }
     var fullName by remember { mutableStateOf("") }
     var upiId by remember { mutableStateOf("") }
-    var householdCode by remember { mutableStateOf("FLAT402") }
-    var householdName by remember { mutableStateOf("Flat 402 - Green View") }
+    var householdCode by remember { mutableStateOf("") }
+    var householdName by remember { mutableStateOf("") }
     var passwordVisible by remember { mutableStateOf(false) }
 
     var isLoading by remember { mutableStateOf(false) }
@@ -484,7 +484,7 @@ fun LoginScreen(
                             value = householdName,
                             onValueChange = { householdName = it },
                             label = { Text("Household / Apartment Name") },
-                            placeholder = { Text("e.g. Flat 402 - Green View") },
+                            placeholder = { Text("e.g. Skyline Residency, Flat 302") },
                             leadingIcon = {
                                 Icon(Icons.Default.Home, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
                             },
@@ -500,7 +500,7 @@ fun LoginScreen(
                             value = householdCode,
                             onValueChange = { householdCode = it.uppercase() },
                             label = { Text("Shared Invite Code") },
-                            placeholder = { Text("e.g. FLAT402") },
+                            placeholder = { Text("e.g. SKY302 or MYHOME") },
                             leadingIcon = {
                                 Icon(Icons.Default.QrCode, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
                             },
@@ -526,13 +526,15 @@ fun LoginScreen(
                                 errorMessage = null
                                 loadingStatusText = "Creating your account & setting up ledger..."
                                 isLoading = true
+                                val finalCode = householdCode.trim().ifBlank { "HOME" + (100..999).random() }
+                                val finalName = householdName.trim().ifBlank { "${fullName.trim()}'s Household" }
                                 onSignUp(
                                     email.trim(),
                                     password,
                                     fullName.trim(),
                                     upiId.trim(),
-                                    householdCode.trim().ifBlank { "FLAT402" },
-                                    householdName.trim().ifBlank { "Flat 402 - Green View" }
+                                    finalCode,
+                                    finalName
                                 ) { success, msg ->
                                     isLoading = false
                                     if (!success) {

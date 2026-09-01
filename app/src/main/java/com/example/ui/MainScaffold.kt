@@ -342,9 +342,13 @@ fun RenderScreen(
                 budgetStatus = budgetStatus,
                 selectedMonthKey = selectedMonthKey,
                 onSelectMonth = { month -> viewModel.selectMonth(month) },
-                onAddExpense = { title, amount, cat, payer, split, notes ->
-                    viewModel.addExpense(title, amount, cat, payer, split, notes)
+                onAddExpense = { title, amount, cat, payer, split, customMembers, notes, dateMillis ->
+                    viewModel.addExpense(title, amount, cat, payer, split, customMembers, notes, dateMillis)
                     onShowMessage("Added expense: $title")
+                },
+                onUpdateExpense = { expense, customMembers ->
+                    viewModel.updateExpense(expense, customMembers)
+                    onShowMessage("Updated expense: ${expense.title}")
                 },
                 onDeleteExpense = { id ->
                     viewModel.deleteExpense(id)
@@ -378,6 +382,10 @@ fun RenderScreen(
                 onAddChore = { title, desc, cat, freq, user, rotMembers, time, dow, dom, pts ->
                     viewModel.addChore(title, desc, cat, freq, user, rotMembers, time, dow, dom, pts)
                     onShowMessage("Scheduled chore: $title")
+                },
+                onUpdateChore = { chore ->
+                    viewModel.updateChore(chore)
+                    onShowMessage("Updated chore: ${chore.title}")
                 }
             )
         }
@@ -409,6 +417,20 @@ fun RenderScreen(
                 onAddDebt = { from, to, amount, reason ->
                     viewModel.addDebt(from, to, amount, reason)
                     onShowMessage("Recorded debt for $reason")
+                },
+                onPay3rdParty = { name, upi, amount, note, recordExpense ->
+                    if (recordExpense) {
+                        viewModel.addExpense(
+                            title = "Payment to $name",
+                            amount = amount,
+                            category = if (name.contains("Rent", true) || name.contains("Landlord", true)) "Rent" else "Utilities",
+                            paidBy = currentUser ?: householdMembers.first(),
+                            splitType = "EQUAL",
+                            splitWithMembers = emptyList(),
+                            notes = note
+                        )
+                        onShowMessage("Payment initiated & recorded in shared expenses!")
+                    }
                 }
             )
         }
@@ -426,6 +448,14 @@ fun RenderScreen(
                 onAddRoommate = { name, email, upi, color ->
                     viewModel.addRoommate(name, email, upi, color)
                     onShowMessage("Added roommate: $name")
+                },
+                onUpdateRoommate = { user ->
+                    viewModel.updateRoommate(user)
+                    onShowMessage("Updated ${user.name}")
+                },
+                onDeleteRoommate = { id, name ->
+                    viewModel.deleteRoommate(id, name)
+                    onShowMessage("Removed $name")
                 },
                 onJoinHousehold = { code, name ->
                     viewModel.joinHousehold(code, name)

@@ -59,7 +59,8 @@ class SupabaseSyncManager(context: Context) {
             members.forEach { dataStore.pushUserProfile(supabaseUrl, supabaseAnonKey, it) }
 
             // 3. Expenses
-            val expenses = dao.getExpensesByMonthDirect(householdId, com.example.util.DateUtils.getCurrentMonthYearKey())
+            val currentUserId = dao.getCurrentUserDirect()?.id ?: ""
+            val expenses = dao.getExpensesByMonthDirect(householdId, com.example.util.DateUtils.getCurrentMonthYearKey(), currentUserId)
             expenses.forEach { dataStore.pushExpense(supabaseUrl, supabaseAnonKey, it) }
 
             // 4. Chores
