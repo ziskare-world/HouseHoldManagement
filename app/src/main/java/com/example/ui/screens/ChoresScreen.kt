@@ -72,6 +72,9 @@ import com.example.data.local.model.UserProfile
 import com.example.ui.components.ChoreDistributionChart
 import com.example.util.DateUtils
 
+import com.example.ui.components.ChoreDetailDialog
+import java.util.Calendar
+
 val ChoreCategories = listOf("Cleaning", "Kitchen", "Trash", "Groceries", "Maintenance")
 val ChoreFrequencies = listOf(
     "DAILY_ROTATION" to "Daily Rotation (Day 1: Roommate A, Day 2: Roommate B...)",
@@ -107,6 +110,7 @@ fun ChoresScreen(
 ) {
     var showAddDialog by remember { mutableStateOf(false) }
     var editingChore by remember { mutableStateOf<ChoreTask?>(null) }
+    var viewingChoreDetails by remember { mutableStateOf<ChoreTask?>(null) }
     var selectedFilter by remember { mutableStateOf("ALL") }
 
     val allRoommates = remember(members, currentUser) {
@@ -118,12 +122,28 @@ fun ChoresScreen(
         combined.ifEmpty { listOfNotNull(currentUser) }
     }
 
-    val filteredChores = remember(chores, selectedFilter) {
+    val filteredChores = remember(chores, selectedFilter, currentUser) {
         when (selectedFilter) {
+            "TODAY" -> chores.filter { chore ->
+                when (chore.frequency) {
+                    "DAILY", "DAILY_ROTATION" -> true
+                    "WEEKLY_SUNDAY_ROTATION" -> DateUtils.isTodaySunday()
+                    "WEEKLY_CUSTOM" -> {
+                        val todayDow = Calendar.getInstance().get(Calendar.DAY_OF_WEEK)
+                        chore.scheduledDayOfWeek == todayDow || chore.scheduledDayOfWeek == 0
+                    }
+                    "MONTHLY" -> {
+                        val todayDom = Calendar.getInstance().get(Calendar.DAY_OF_MONTH)
+                        chore.scheduledDayOfMonth == todayDom || chore.scheduledDayOfMonth == 0
+                    }
+                    else -> true
+                }
+            }
+            "MY_CHORES" -> chores.filter { it.assignedToUserId == currentUser?.id }
+            "ROOMMATES" -> chores.filter { it.assignedToUserId != currentUser?.id }
             "DAILY" -> chores.filter { it.frequency == "DAILY" || it.frequency == "DAILY_ROTATION" }
             "SUNDAY" -> chores.filter { it.frequency == "WEEKLY_SUNDAY_ROTATION" }
             "MONTHLY" -> chores.filter { it.frequency == "MONTHLY" }
-            "MY_CHORES" -> chores.filter { it.assignedToUserId == currentUser?.id }
             else -> chores
         }
     }
@@ -164,7 +184,9 @@ fun ChoresScreen(
                 ) {
                     val filterOptions = listOf(
                         "ALL" to "All (${chores.size})",
+                        "TODAY" to "Today's Duty",
                         "MY_CHORES" to "My Duties",
+                        "ROOMMATES" to "Roommates",
                         "DAILY" to "Daily",
                         "SUNDAY" to "Sunday Roster",
                         "MONTHLY" to "Monthly"
@@ -200,7 +222,7 @@ fun ChoresScreen(
                     ) {
                         Box(modifier = Modifier.padding(32.dp), contentAlignment = Alignment.Center) {
                             Text(
-                                text = "No chores found in this category. Tap '+' to create one!",
+                                text = "No chores found in this filter. Tap '+' to create one!",
                                 style = MaterialTheme.typography.bodyMedium,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
@@ -211,6 +233,8 @@ fun ChoresScreen(
                 items(filteredChores, key = { it.id }) { chore ->
                     ChoreCardItem(
                         chore = chore,
+                        currentUser = currentUser,
+                        onClick = { viewingChoreDetails = chore },
                         onToggle = { onToggleChore(chore) },
                         onRotate = { onRotateSundayChore(chore) },
                         onSendAlert = { onSendPushAlert(chore) },
@@ -276,11 +300,38 @@ fun ChoresScreen(
             }
         )
     }
+
+    viewingChoreDetails?.let { chore ->
+        ChoreDetailDialog(
+            chore = chore,
+            members = allRoommates,
+            currentUser = currentUser,
+            onDismiss = { viewingChoreDetails = null },
+            onToggleStatus = {
+                onToggleChore(chore)
+                viewingChoreDetails = null
+            },
+            onSendNudge = {
+                onSendPushAlert(chore)
+                viewingChoreDetails = null
+            },
+            onRotateNext = {
+                onRotateSundayChore(chore)
+                viewingChoreDetails = null
+            },
+            onEdit = {
+                editingChore = chore
+                viewingChoreDetails = null
+            }
+        )
+    }
 }
 
 @Composable
 fun ChoreCardItem(
     chore: ChoreTask,
+    currentUser: UserProfile?,
+    onClick: () -> Unit,
     onToggle: () -> Unit,
     onRotate: () -> Unit,
     onSendAlert: () -> Unit,
@@ -288,12 +339,22 @@ fun ChoreCardItem(
     onDelete: () -> Unit
 ) {
     val isCompleted = chore.status == "COMPLETED"
+    val isMyChore = chore.assignedToUserId == currentUser?.id
 
     Card(
-        modifier = Modifier.fillMaxWidth(),
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(18.dp))
+            .clickable { onClick() },
         shape = RoundedCornerShape(18.dp),
         colors = CardDefaults.cardColors(
-            containerColor = if (isCompleted) MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f) else MaterialTheme.colorScheme.surface
+            containerColor = if (isCompleted) {
+                MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f)
+            } else if (isMyChore) {
+                MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.25f)
+            } else {
+                MaterialTheme.colorScheme.surface
+            }
         ),
         elevation = CardDefaults.cardElevation(defaultElevation = if (isCompleted) 0.dp else 2.dp)
     ) {
@@ -314,12 +375,31 @@ fun ChoreCardItem(
                 Spacer(modifier = Modifier.width(8.dp))
 
                 Column(modifier = Modifier.weight(1f)) {
-                    Text(
-                        text = chore.title,
-                        style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.Bold,
-                        color = if (isCompleted) MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f) else MaterialTheme.colorScheme.onSurface
-                    )
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(
+                            text = chore.title,
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.Bold,
+                            color = if (isCompleted) MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f) else MaterialTheme.colorScheme.onSurface,
+                            modifier = Modifier.weight(1f, fill = false)
+                        )
+                        if (isMyChore && !isCompleted) {
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Surface(
+                                shape = RoundedCornerShape(6.dp),
+                                color = MaterialTheme.colorScheme.primary
+                            ) {
+                                Text(
+                                    text = "YOUR DUTY",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    fontWeight = FontWeight.ExtraBold,
+                                    fontSize = 9.sp,
+                                    color = MaterialTheme.colorScheme.onPrimary,
+                                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                                )
+                            }
+                        }
+                    }
                     if (chore.description.isNotBlank()) {
                         Text(
                             text = chore.description,
@@ -330,12 +410,21 @@ fun ChoreCardItem(
                     }
                 }
 
-                // Push Alert Button
-                IconButton(onClick = onSendAlert) {
+                // Push Alert / Bell Nudge Button
+                IconButton(
+                    onClick = onSendAlert,
+                    modifier = Modifier
+                        .size(36.dp)
+                        .clip(CircleShape)
+                        .background(
+                            if (isMyChore) Color(0xFFF3F4F6) else Color(0xFFFEF3C7)
+                        )
+                ) {
                     Icon(
                         imageVector = Icons.Default.NotificationsActive,
-                        contentDescription = "Trigger push alert",
-                        tint = Color(0xFFF59E0B)
+                        contentDescription = if (isMyChore) "Broadcast Chore Alert" else "Nudge ${chore.assignedToUserName}",
+                        tint = if (isMyChore) MaterialTheme.colorScheme.onSurfaceVariant else Color(0xFFD97706),
+                        modifier = Modifier.size(18.dp)
                     )
                 }
             }
@@ -355,10 +444,10 @@ fun ChoreCardItem(
                     // Assignee badge
                     Surface(
                         shape = RoundedCornerShape(8.dp),
-                        color = MaterialTheme.colorScheme.primaryContainer
+                        color = if (isMyChore) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant
                     ) {
                         Text(
-                            text = "👤 ${chore.assignedToUserName}",
+                            text = if (isMyChore) "👤 You" else "👤 ${chore.assignedToUserName}",
                             style = MaterialTheme.typography.labelSmall,
                             fontWeight = FontWeight.Bold,
                             modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)

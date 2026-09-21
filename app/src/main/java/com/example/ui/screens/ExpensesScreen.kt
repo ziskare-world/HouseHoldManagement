@@ -66,6 +66,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.data.local.model.ExpenseItem
 import com.example.data.local.model.UserProfile
+import com.example.ui.components.ExpenseDetailDialog
 import com.example.ui.components.MonthlyExpenseDonutChart
 import com.example.ui.components.getCategoryColor
 import com.example.ui.viewmodel.BudgetStatus
@@ -104,6 +105,7 @@ fun ExpensesScreen(
 ) {
     var showAddDialog by remember { mutableStateOf(false) }
     var editingExpense by remember { mutableStateOf<ExpenseItem?>(null) }
+    var viewingExpenseDetails by remember { mutableStateOf<ExpenseItem?>(null) }
     var showBudgetConfigDialog by remember { mutableStateOf(false) }
     var selectedCategoryFilter by remember { mutableStateOf<String?>(null) }
 
@@ -371,6 +373,7 @@ fun ExpensesScreen(
                 items(monthFilteredExpenses, key = { it.id }) { item ->
                     ExpenseRowItem(
                         expense = item,
+                        onClick = { viewingExpenseDetails = item },
                         onEdit = { editingExpense = item },
                         onDelete = { onDeleteExpense(item.id) }
                     )
@@ -392,6 +395,24 @@ fun ExpensesScreen(
         ) {
             Icon(imageVector = Icons.Default.Add, contentDescription = "Add Expense", tint = Color.White)
         }
+    }
+
+    // Expense Detail Dialog (inspect full per-roommate splits & shares)
+    viewingExpenseDetails?.let { exp ->
+        ExpenseDetailDialog(
+            expense = exp,
+            members = members,
+            currentUser = currentUser,
+            onDismiss = { viewingExpenseDetails = null },
+            onEdit = {
+                editingExpense = exp
+                viewingExpenseDetails = null
+            },
+            onDelete = {
+                onDeleteExpense(exp.id)
+                viewingExpenseDetails = null
+            }
+        )
     }
 
     // Add Expense Dialog
@@ -456,11 +477,15 @@ fun ExpensesScreen(
 @Composable
 fun ExpenseRowItem(
     expense: ExpenseItem,
+    onClick: () -> Unit,
     onEdit: () -> Unit,
     onDelete: () -> Unit
 ) {
     Card(
-        modifier = Modifier.fillMaxWidth(),
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(16.dp))
+            .clickable { onClick() },
         shape = RoundedCornerShape(16.dp),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
         elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)

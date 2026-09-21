@@ -187,6 +187,24 @@ class SupabaseDataStore(
         upsertRecord(baseUrl, anonKey, "budget_configs", json.toString())
     }
 
+    suspend fun pushNotification(baseUrl: String, anonKey: String, notif: com.example.data.local.model.HouseholdNotification): Boolean = withContext(Dispatchers.IO) {
+        val json = JSONObject().apply {
+            put("id", notif.id)
+            put("household_id", notif.householdId)
+            put("sender_user_id", notif.senderUserId)
+            put("sender_user_name", notif.senderUserName)
+            put("target_user_id", notif.targetUserId)
+            put("target_user_name", notif.targetUserName)
+            put("type", notif.type)
+            put("title", notif.title)
+            put("message", notif.message)
+            put("related_entity_id", notif.relatedEntityId)
+            put("is_read", notif.isRead)
+            put("created_at", notif.createdAt)
+        }
+        upsertRecord(baseUrl, anonKey, "household_notifications", json.toString())
+    }
+
     private suspend fun upsertRecord(baseUrl: String, anonKey: String, table: String, jsonPayload: String): Boolean {
         if (baseUrl.isBlank() || anonKey.isBlank()) return false
         return try {
@@ -446,6 +464,37 @@ class SupabaseDataStore(
                     )
                     dao.insertBudgetConfig(budget)
                     totalRecords++
+                }
+            }
+
+            // 8. Pull Household Notifications & Alerts
+            val notifsJson = queryTable(baseUrl, anonKey, "household_notifications", "household_id=eq.$householdId")
+            if (!notifsJson.isNullOrBlank()) {
+                val array = JSONArray(notifsJson)
+                val notifList = mutableListOf<com.example.data.local.model.HouseholdNotification>()
+                for (i in 0 until array.length()) {
+                    val obj = array.getJSONObject(i)
+                    notifList.add(
+                        com.example.data.local.model.HouseholdNotification(
+                            id = obj.optString("id", ""),
+                            householdId = obj.optString("household_id", householdId),
+                            senderUserId = obj.optString("sender_user_id", ""),
+                            senderUserName = obj.optString("sender_user_name", ""),
+                            targetUserId = obj.optString("target_user_id", ""),
+                            targetUserName = obj.optString("target_user_name", ""),
+                            type = obj.optString("type", "DEBT_REMINDER"),
+                            title = obj.optString("title", ""),
+                            message = obj.optString("message", ""),
+                            relatedEntityId = obj.optString("related_entity_id", ""),
+                            isRead = obj.optBoolean("is_read", false),
+                            isSynced = true,
+                            createdAt = obj.optLong("created_at", System.currentTimeMillis())
+                        )
+                    )
+                }
+                if (notifList.isNotEmpty()) {
+                    dao.insertNotifications(notifList)
+                    totalRecords += notifList.size
                 }
             }
 

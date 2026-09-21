@@ -37,6 +37,9 @@ import androidx.compose.material.icons.filled.WarningAmber
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
+import androidx.compose.material3.Badge
+import androidx.compose.material3.BadgedBox
+import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.FilledTonalButton
@@ -48,6 +51,10 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -58,9 +65,12 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.data.local.model.ChoreTask
 import com.example.data.local.model.ExpenseItem
+import com.example.data.local.model.HouseholdNotification
 import com.example.data.local.model.SettlementDebt
 import com.example.data.local.model.UserProfile
 import com.example.ui.components.BudgetAlertBanner
+import com.example.ui.components.ChoreDetailDialog
+import com.example.ui.components.HouseholdNotificationDialog
 import com.example.ui.components.MonthlySpendingTrendBarChart
 import com.example.ui.viewmodel.BudgetStatus
 import com.example.ui.viewmodel.ScreenTab
@@ -75,6 +85,9 @@ fun DashboardScreen(
     sundayRotationChore: ChoreTask?,
     pendingDebts: List<SettlementDebt>,
     expenses: List<ExpenseItem>,
+    notifications: List<HouseholdNotification> = emptyList(),
+    unreadNotificationsCount: Int = 0,
+    members: List<UserProfile> = emptyList(),
     isSyncing: Boolean,
     onNavigate: (ScreenTab) -> Unit,
     onQuickAddExpense: () -> Unit,
@@ -85,8 +98,22 @@ fun DashboardScreen(
     onTriggerSync: () -> Unit,
     onRotateSundayChore: (ChoreTask) -> Unit,
     onSendAlert: (ChoreTask) -> Unit,
+    onSendDebtReminder: ((SettlementDebt) -> Unit)? = null,
+    onVerifyDebt: ((SettlementDebt, Boolean) -> Unit)? = null,
+    onMarkNotificationRead: ((String) -> Unit)? = null,
+    onMarkAllNotificationsRead: (() -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
+    var showNotificationsDialog by remember { mutableStateOf(false) }
+    var viewingChoreDetail by remember { mutableStateOf<ChoreTask?>(null) }
+
+    val myDutiesToday = remember(todayChores, currentUser) {
+        todayChores.filter { it.assignedToUserId == currentUser?.id }
+    }
+    val roommatesDutiesToday = remember(todayChores, currentUser) {
+        todayChores.filter { it.assignedToUserId != currentUser?.id }
+    }
+
     LazyColumn(
         modifier = modifier.fillMaxSize(),
         contentPadding = PaddingValues(16.dp),
@@ -137,21 +164,55 @@ fun DashboardScreen(
                             }
                         }
 
-                        // Cloud Sync Button
-                        IconButton(
-                            onClick = onTriggerSync,
-                            modifier = Modifier
-                                .clip(CircleShape)
-                                .background(MaterialTheme.colorScheme.surface)
+                        // Top Header Actions: Notification Bell + Cloud Sync
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(6.dp)
                         ) {
-                            if (isSyncing) {
-                                CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
-                            } else {
-                                Icon(
-                                    imageVector = Icons.Default.CloudSync,
-                                    contentDescription = "Sync Supabase",
-                                    tint = MaterialTheme.colorScheme.primary
-                                )
+                            IconButton(
+                                onClick = { showNotificationsDialog = true },
+                                modifier = Modifier
+                                    .clip(CircleShape)
+                                    .background(MaterialTheme.colorScheme.surface)
+                            ) {
+                                if (unreadNotificationsCount > 0) {
+                                    BadgedBox(
+                                        badge = {
+                                            Badge(containerColor = MaterialTheme.colorScheme.error) {
+                                                Text(unreadNotificationsCount.toString())
+                                            }
+                                        }
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Default.Notifications,
+                                            contentDescription = "Notifications",
+                                            tint = MaterialTheme.colorScheme.primary
+                                        )
+                                    }
+                                } else {
+                                    Icon(
+                                        imageVector = Icons.Default.Notifications,
+                                        contentDescription = "Notifications",
+                                        tint = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+                            }
+
+                            IconButton(
+                                onClick = onTriggerSync,
+                                modifier = Modifier
+                                    .clip(CircleShape)
+                                    .background(MaterialTheme.colorScheme.surface)
+                            ) {
+                                if (isSyncing) {
+                                    CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
+                                } else {
+                                    Icon(
+                                        imageVector = Icons.Default.CloudSync,
+                                        contentDescription = "Sync Supabase",
+                                        tint = MaterialTheme.colorScheme.primary
+                                    )
+                                }
                             }
                         }
                     }
@@ -308,11 +369,18 @@ fun DashboardScreen(
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Text(
-                    text = "Today's Work Distribution",
-                    style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.Bold
-                )
+                Column {
+                    Text(
+                        text = "Today's Work Distribution",
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold
+                    )
+                    Text(
+                        text = "Today's duties roster across roommates",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
                 TextButton(onClick = { onNavigate(ScreenTab.CHORES) }) {
                     Text("View All Chores")
                 }
@@ -336,12 +404,48 @@ fun DashboardScreen(
                 }
             }
         } else {
-            items(todayChores.take(3)) { chore ->
-                ChoreQuickCard(
-                    chore = chore,
-                    onToggle = { onToggleChore(chore) },
-                    onSendAlert = { onSendAlert(chore) }
-                )
+            // 1. My Duties Today
+            if (myDutiesToday.isNotEmpty()) {
+                item {
+                    Text(
+                        text = "⭐ Your Duty Today (${myDutiesToday.size})",
+                        style = MaterialTheme.typography.labelMedium,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.padding(start = 4.dp, top = 4.dp)
+                    )
+                }
+                items(myDutiesToday, key = { "my_${it.id}" }) { chore ->
+                    ChoreQuickCard(
+                        chore = chore,
+                        currentUser = currentUser,
+                        onClick = { viewingChoreDetail = chore },
+                        onToggle = { onToggleChore(chore) },
+                        onSendAlert = { onSendAlert(chore) }
+                    )
+                }
+            }
+
+            // 2. Roommates' Duties Today
+            if (roommatesDutiesToday.isNotEmpty()) {
+                item {
+                    Text(
+                        text = "👥 Roommates' Duty Today (${roommatesDutiesToday.size})",
+                        style = MaterialTheme.typography.labelMedium,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(start = 4.dp, top = 6.dp)
+                    )
+                }
+                items(roommatesDutiesToday, key = { "rm_${it.id}" }) { chore ->
+                    ChoreQuickCard(
+                        chore = chore,
+                        currentUser = currentUser,
+                        onClick = { viewingChoreDetail = chore },
+                        onToggle = { onToggleChore(chore) },
+                        onSendAlert = { onSendAlert(chore) }
+                    )
+                }
             }
         }
 
@@ -380,10 +484,13 @@ fun DashboardScreen(
                 }
             }
         } else {
-            items(pendingDebts.take(2)) { debt ->
+            items(pendingDebts.take(3), key = { it.id }) { debt ->
                 PendingDebtQuickCard(
                     debt = debt,
-                    onPay = { onPayDebt(debt) }
+                    currentUser = currentUser,
+                    onPay = { onPayDebt(debt) },
+                    onSendReminder = { onSendDebtReminder?.invoke(debt) },
+                    onVerify = { isVerified -> onVerifyDebt?.invoke(debt, isVerified) }
                 )
             }
         }
@@ -395,6 +502,51 @@ fun DashboardScreen(
                 budgetLimit = budgetStatus.budgetLimit
             )
         }
+    }
+
+    // Household In-App Notification Center Modal
+    if (showNotificationsDialog) {
+        HouseholdNotificationDialog(
+            notifications = notifications,
+            onDismiss = { showNotificationsDialog = false },
+            onMarkAsRead = { id -> onMarkNotificationRead?.invoke(id) },
+            onMarkAllAsRead = { onMarkAllNotificationsRead?.invoke() },
+            onActionClick = { type, _ ->
+                showNotificationsDialog = false
+                when (type) {
+                    "DEBT_SETTLEMENT", "DEBT_VERIFY" -> onNavigate(ScreenTab.SETTLEMENTS)
+                    "CHORE_REMINDER" -> onNavigate(ScreenTab.CHORES)
+                    "EXPENSE_SPLIT" -> onNavigate(ScreenTab.EXPENSES)
+                    else -> {}
+                }
+            }
+        )
+    }
+
+    // Chore Detailed Inspection Modal
+    viewingChoreDetail?.let { chore ->
+        ChoreDetailDialog(
+            chore = chore,
+            members = members,
+            currentUser = currentUser,
+            onDismiss = { viewingChoreDetail = null },
+            onToggleStatus = {
+                onToggleChore(chore)
+                viewingChoreDetail = null
+            },
+            onSendNudge = {
+                onSendAlert(chore)
+                viewingChoreDetail = null
+            },
+            onRotateNext = {
+                onRotateSundayChore(chore)
+                viewingChoreDetail = null
+            },
+            onEdit = {
+                viewingChoreDetail = null
+                onNavigate(ScreenTab.CHORES)
+            }
+        )
     }
 }
 
@@ -436,13 +588,23 @@ fun QuickActionButton(
 @Composable
 fun ChoreQuickCard(
     chore: ChoreTask,
+    currentUser: UserProfile?,
+    onClick: () -> Unit,
     onToggle: () -> Unit,
     onSendAlert: () -> Unit
 ) {
+    val isMyChore = chore.assignedToUserId == currentUser?.id
+    val isCompleted = chore.status == "COMPLETED"
+
     Card(
-        modifier = Modifier.fillMaxWidth(),
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(16.dp))
+            .clickable { onClick() },
         shape = RoundedCornerShape(16.dp),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+        colors = CardDefaults.cardColors(
+            containerColor = if (isMyChore) MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.25f) else MaterialTheme.colorScheme.surface
+        ),
         elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
     ) {
         Row(
@@ -453,9 +615,9 @@ fun ChoreQuickCard(
         ) {
             IconButton(onClick = onToggle) {
                 Icon(
-                    imageVector = if (chore.status == "COMPLETED") Icons.Default.CheckCircle else Icons.Default.CleaningServices,
+                    imageVector = if (isCompleted) Icons.Default.CheckCircle else Icons.Default.CleaningServices,
                     contentDescription = "Toggle",
-                    tint = if (chore.status == "COMPLETED") Color(0xFF10B981) else MaterialTheme.colorScheme.primary
+                    tint = if (isCompleted) Color(0xFF10B981) else MaterialTheme.colorScheme.primary
                 )
             }
 
@@ -468,18 +630,26 @@ fun ChoreQuickCard(
                     fontWeight = FontWeight.SemiBold
                 )
                 Text(
-                    text = "Duty: ${chore.assignedToUserName} • ${chore.scheduledTime}",
+                    text = if (isMyChore) "Your Duty • ${chore.scheduledTime} (+${chore.points}pts)" else "Duty: ${chore.assignedToUserName} • ${chore.scheduledTime}",
                     style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                    color = if (isMyChore) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                    fontWeight = if (isMyChore) FontWeight.Bold else FontWeight.Normal
                 )
             }
 
-            IconButton(onClick = onSendAlert) {
+            // Bell button to send reminder alert to roommate (or alert if self)
+            IconButton(
+                onClick = onSendAlert,
+                modifier = Modifier
+                    .size(32.dp)
+                    .clip(CircleShape)
+                    .background(if (isMyChore) Color(0xFFF3F4F6) else Color(0xFFFEF3C7))
+            ) {
                 Icon(
                     imageVector = Icons.Default.NotificationsActive,
-                    contentDescription = "Send push alert",
-                    tint = Color(0xFFF59E0B),
-                    modifier = Modifier.size(20.dp)
+                    contentDescription = if (isMyChore) "Alert" else "Nudge ${chore.assignedToUserName}",
+                    tint = if (isMyChore) MaterialTheme.colorScheme.onSurfaceVariant else Color(0xFFD97706),
+                    modifier = Modifier.size(16.dp)
                 )
             }
         }
@@ -489,12 +659,21 @@ fun ChoreQuickCard(
 @Composable
 fun PendingDebtQuickCard(
     debt: SettlementDebt,
-    onPay: () -> Unit
+    currentUser: UserProfile?,
+    onPay: () -> Unit,
+    onSendReminder: () -> Unit,
+    onVerify: (Boolean) -> Unit
 ) {
+    val isDebtor = debt.fromUserId == currentUser?.id
+    val isCreditor = debt.toUserId == currentUser?.id
+    val isPendingConfirmation = debt.status == "PENDING_CONFIRMATION"
+
     Card(
         modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(16.dp),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+        colors = CardDefaults.cardColors(
+            containerColor = if (isDebtor) MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.2f) else MaterialTheme.colorScheme.surface
+        ),
         elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
     ) {
         Row(
@@ -506,32 +685,109 @@ fun PendingDebtQuickCard(
         ) {
             Column(modifier = Modifier.weight(1f)) {
                 Text(
-                    text = "${debt.fromUserName} owes ${debt.toUserName}",
+                    text = when {
+                        isDebtor -> "You owe ${debt.toUserName}"
+                        isCreditor -> "${debt.fromUserName} owes you"
+                        else -> "${debt.fromUserName} owes ${debt.toUserName}"
+                    },
                     style = MaterialTheme.typography.bodyMedium,
-                    fontWeight = FontWeight.SemiBold
+                    fontWeight = FontWeight.Bold,
+                    color = if (isDebtor) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurface
                 )
                 Text(
                     text = "${debt.reason} • UPI: ${debt.toUserUpiId.ifBlank { "Not added" }}",
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
+                if (isPendingConfirmation) {
+                    Spacer(modifier = Modifier.height(2.dp))
+                    Text(
+                        text = "Payment submitted (Ref: ${debt.transactionRef})",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = Color(0xFFD97706),
+                        fontWeight = FontWeight.SemiBold
+                    )
+                }
             }
 
             Column(horizontalAlignment = Alignment.End) {
                 Text(
                     text = DateUtils.formatCurrency(debt.amount),
                     style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.Bold,
-                    color = MaterialTheme.colorScheme.primary
+                    fontWeight = FontWeight.ExtraBold,
+                    color = if (isDebtor) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary
                 )
                 Spacer(modifier = Modifier.height(4.dp))
-                Button(
-                    onClick = onPay,
-                    shape = RoundedCornerShape(8.dp),
-                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp),
-                    modifier = Modifier.height(32.dp)
-                ) {
-                    Text(text = "Pay UPI", fontSize = 11.sp)
+
+                when {
+                    isDebtor -> {
+                        if (isPendingConfirmation) {
+                            Surface(
+                                shape = RoundedCornerShape(8.dp),
+                                color = Color(0xFFFEF3C7)
+                            ) {
+                                Text(
+                                    text = "Pending ✓",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = Color(0xFFB45309),
+                                    fontWeight = FontWeight.Bold,
+                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                                )
+                            }
+                        } else {
+                            Button(
+                                onClick = onPay,
+                                shape = RoundedCornerShape(8.dp),
+                                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp),
+                                modifier = Modifier.height(32.dp)
+                            ) {
+                                Text(text = "Pay UPI", fontSize = 11.sp)
+                            }
+                        }
+                    }
+                    isCreditor -> {
+                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                            // Bell reminder button for creditor
+                            IconButton(
+                                onClick = onSendReminder,
+                                modifier = Modifier
+                                    .size(32.dp)
+                                    .clip(CircleShape)
+                                    .background(Color(0xFFFEF3C7))
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.NotificationsActive,
+                                    contentDescription = "Send Reminder",
+                                    tint = Color(0xFFD97706),
+                                    modifier = Modifier.size(16.dp)
+                                )
+                            }
+
+                            if (isPendingConfirmation) {
+                                Button(
+                                    onClick = { onVerify(true) },
+                                    shape = RoundedCornerShape(8.dp),
+                                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
+                                    modifier = Modifier.height(32.dp),
+                                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF10B981))
+                                ) {
+                                    Text(text = "Verify ✓", fontSize = 11.sp, color = Color.White)
+                                }
+                            }
+                        }
+                    }
+                    else -> {
+                        Surface(
+                            shape = RoundedCornerShape(6.dp),
+                            color = MaterialTheme.colorScheme.surfaceVariant
+                        ) {
+                            Text(
+                                text = "Shared",
+                                style = MaterialTheme.typography.labelSmall,
+                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                            )
+                        }
+                    }
                 }
             }
         }

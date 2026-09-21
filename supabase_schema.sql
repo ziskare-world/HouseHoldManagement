@@ -116,6 +116,22 @@ CREATE TABLE IF NOT EXISTS public.budget_configs (
     PRIMARY KEY (month_year_key, household_id)
 );
 
+-- 8. Household Notifications Table
+CREATE TABLE IF NOT EXISTS public.household_notifications (
+    id TEXT PRIMARY KEY,
+    household_id TEXT REFERENCES public.households(id) ON DELETE CASCADE,
+    sender_user_id TEXT NOT NULL,
+    sender_user_name TEXT NOT NULL,
+    target_user_id TEXT NOT NULL,
+    target_user_name TEXT NOT NULL,
+    type TEXT NOT NULL,
+    title TEXT NOT NULL,
+    message TEXT NOT NULL,
+    related_entity_id TEXT,
+    is_read BOOLEAN DEFAULT false,
+    created_at BIGINT DEFAULT (extract(epoch from now()) * 1000)::bigint
+);
+
 -- Enable Row Level Security (RLS)
 ALTER TABLE public.households ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.user_profiles ENABLE ROW LEVEL SECURITY;
@@ -124,6 +140,7 @@ ALTER TABLE public.chore_tasks ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.settlement_debts ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.savings_goals ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.budget_configs ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.household_notifications ENABLE ROW LEVEL SECURITY;
 
 -- Permissive RLS Policies for RoomieVault Sync
 DO $$
@@ -148,4 +165,7 @@ BEGIN
 
     DROP POLICY IF EXISTS "Allow all operations for anon and auth" ON public.budget_configs;
     CREATE POLICY "Allow all operations for anon and auth" ON public.budget_configs FOR ALL USING (true) WITH CHECK (true);
+
+    DROP POLICY IF EXISTS "Allow all operations for anon and auth" ON public.household_notifications;
+    CREATE POLICY "Allow all operations for anon and auth" ON public.household_notifications FOR ALL USING (true) WITH CHECK (true);
 END $$;

@@ -1,0 +1,10 @@
+{
+  "versionCode": 2,
+  "versionName": "1.1",
+  "minSupportedVersionCode": 1,
+  "isMandatory": true,
+  "title": "RoomieVault v1.1 Mandatory Update",
+  "description": "• Fixed Giving Money & Debt Recording in Splits screen\n• Added GitHub In-App Auto-Update system\n• Added 3-roommate Daily Work Roster\n• Added September & multi-month dynamic expense tracking\n• Expense & Chore editing enhancements",
+  "downloadUrl": "https://github.com/ziskare-world/HouseHoldManagement/releases/latest",
+  "directApkUrl": "https://github.com/ziskare-world/HouseHoldManagement/releases/latest/download/app-debug.apk"
+}

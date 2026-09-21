@@ -9,6 +9,7 @@ import com.example.data.local.model.BudgetConfig
 import com.example.data.local.model.ChoreTask
 import com.example.data.local.model.ExpenseItem
 import com.example.data.local.model.Household
+import com.example.data.local.model.HouseholdNotification
 import com.example.data.local.model.SavingsGoal
 import com.example.data.local.model.SettlementDebt
 import com.example.data.local.model.UserProfile
@@ -168,4 +169,32 @@ interface RoomieDao {
 
     @Query("DELETE FROM households")
     suspend fun clearAllHouseholds()
+
+    // --- Household Notifications & Alerts ---
+    @Query("SELECT * FROM household_notifications WHERE householdId = :householdId AND targetUserId = :userId ORDER BY createdAt DESC")
+    fun getNotificationsForUser(householdId: String, userId: String): Flow<List<HouseholdNotification>>
+
+    @Query("SELECT * FROM household_notifications WHERE householdId = :householdId AND targetUserId = :userId ORDER BY createdAt DESC")
+    suspend fun getNotificationsForUserDirect(householdId: String, userId: String): List<HouseholdNotification>
+
+    @Query("SELECT COUNT(*) FROM household_notifications WHERE householdId = :householdId AND targetUserId = :userId AND isRead = 0")
+    fun getUnreadNotificationsCount(householdId: String, userId: String): Flow<Int>
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertNotification(notification: HouseholdNotification)
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertNotifications(notifications: List<HouseholdNotification>)
+
+    @Query("UPDATE household_notifications SET isRead = 1 WHERE id = :id")
+    suspend fun markNotificationAsRead(id: String)
+
+    @Query("UPDATE household_notifications SET isRead = 1 WHERE householdId = :householdId AND targetUserId = :userId")
+    suspend fun markAllNotificationsAsRead(householdId: String, userId: String)
+
+    @Query("DELETE FROM household_notifications WHERE id = :id")
+    suspend fun deleteNotification(id: String)
+
+    @Query("DELETE FROM household_notifications")
+    suspend fun clearAllNotifications()
 }

@@ -90,6 +90,15 @@ fun SettlementsScreen(
     var selectedDebtForPayment by remember { mutableStateOf<SettlementDebt?>(null) }
     var filterTab by remember { mutableStateOf("PENDING") } // PENDING, SETTLED, ALL
 
+    val allRoommates = remember(members, currentUser) {
+        val combined = mutableListOf<UserProfile>()
+        currentUser?.let { combined.add(it) }
+        members.forEach { m ->
+            if (combined.none { it.id == m.id }) combined.add(m)
+        }
+        combined.ifEmpty { listOfNotNull(currentUser) }
+    }
+
     val myId = currentUser?.id ?: "USR_ALEX"
 
     val totalIOwe = remember(debts, myId) {
@@ -318,8 +327,10 @@ fun SettlementsScreen(
                     DebtCardItem(
                         debt = debt,
                         isCurrentUsersDebt = debt.fromUserId == myId,
+                        isOwedToCurrentUser = debt.toUserId == myId,
                         onPayClick = { selectedDebtForPayment = debt },
                         onToggleVerified = { isVerified -> onVerifyPayment(debt, isVerified) },
+                        onRequestConfirmation = { txRef -> onRequestConfirmation(debt, txRef) },
                         onSendReminder = { onSendReminder(debt) },
                         onDelete = { onDeleteDebt(debt.id) }
                     )
@@ -344,7 +355,7 @@ fun SettlementsScreen(
 
     if (showAddDialog) {
         AddDebtDialog(
-            members = members,
+            members = allRoommates,
             currentUser = currentUser,
             onDismiss = { showAddDialog = false },
             onConfirm = { from, to, amount, reason ->
@@ -393,55 +404,84 @@ fun SettlementsScreen(
 fun DebtCardItem(
     debt: SettlementDebt,
     isCurrentUsersDebt: Boolean,
+    isOwedToCurrentUser: Boolean,
     onPayClick: () -> Unit,
     onToggleVerified: (Boolean) -> Unit,
+    onRequestConfirmation: (String) -> Unit,
     onSendReminder: () -> Unit,
     onDelete: () -> Unit
 ) {
     val isVerified = debt.status == "VERIFIED"
     val isAwaitingConfirmation = debt.status == "PAID_PENDING_CONFIRMATION"
+    var showSendRefDialog by remember { mutableStateOf(false) }
+    var txRefInput by remember { mutableStateOf("") }
 
     Card(
         modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(18.dp),
         colors = CardDefaults.cardColors(
-            containerColor = if (isVerified) MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f) else MaterialTheme.colorScheme.surface
+            containerColor = when {
+                isVerified -> MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f)
+                isCurrentUsersDebt -> Color(0xFFFFF7ED) // Gentle warm tint for dues I owe
+                isOwedToCurrentUser -> Color(0xFFF0FDF4) // Gentle mint tint for money I am owed
+                else -> MaterialTheme.colorScheme.surface
+            }
         ),
         elevation = CardDefaults.cardElevation(defaultElevation = if (isVerified) 0.dp else 2.dp)
     ) {
         Column(modifier = Modifier.padding(16.dp)) {
+            // Header Row: Perspective Title and Amount
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Column(modifier = Modifier.weight(1f)) {
+                    // Headline based on who is viewing
+                    val headline = when {
+                        isCurrentUsersDebt -> "You owe ${debt.toUserName}"
+                        isOwedToCurrentUser -> "${debt.fromUserName} owes you"
+                        else -> "${debt.fromUserName} → ${debt.toUserName}"
+                    }
+
                     Text(
-                        text = "${debt.fromUserName} → ${debt.toUserName}",
+                        text = headline,
                         style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.Bold
+                        fontWeight = FontWeight.ExtraBold,
+                        color = when {
+                            isVerified -> MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f)
+                            isCurrentUsersDebt -> Color(0xFFC2410C)
+                            isOwedToCurrentUser -> Color(0xFF047857)
+                            else -> MaterialTheme.colorScheme.onSurface
+                        }
                     )
+
+                    Spacer(modifier = Modifier.height(2.dp))
+
+                    val subtitle = when {
+                        isCurrentUsersDebt -> "${debt.reason} • Pay via UPI: ${debt.toUserUpiId.ifBlank { "Not added" }}"
+                        isOwedToCurrentUser -> "${debt.reason} • Expected on your UPI (${debt.toUserUpiId.ifBlank { "Not configured" }})"
+                        else -> debt.reason
+                    }
                     Text(
-                        text = debt.reason,
+                        text = subtitle,
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
-                    if (debt.toUserUpiId.isNotBlank()) {
-                        Text(
-                            text = "UPI: ${debt.toUserUpiId}",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.primary,
-                            fontWeight = FontWeight.Medium
-                        )
-                    }
                 }
+
+                Spacer(modifier = Modifier.width(8.dp))
 
                 Column(horizontalAlignment = Alignment.End) {
                     Text(
                         text = DateUtils.formatCurrency(debt.amount),
                         style = MaterialTheme.typography.titleLarge,
                         fontWeight = FontWeight.ExtraBold,
-                        color = if (isVerified) Color(0xFF10B981) else MaterialTheme.colorScheme.primary
+                        color = when {
+                            isVerified -> Color(0xFF10B981)
+                            isCurrentUsersDebt -> Color(0xFFDC2626)
+                            else -> Color(0xFF059669)
+                        }
                     )
                     Spacer(modifier = Modifier.height(2.dp))
                     Surface(
@@ -472,59 +512,159 @@ fun DebtCardItem(
                 }
             }
 
+            // If debtor has marked payment sent with reference, display banner
+            if (isAwaitingConfirmation && debt.transactionRef.isNotBlank()) {
+                Spacer(modifier = Modifier.height(8.dp))
+                Surface(
+                    shape = RoundedCornerShape(8.dp),
+                    color = Color(0xFFFEF3C7),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Payment,
+                            contentDescription = null,
+                            tint = Color(0xFFB45309),
+                            modifier = Modifier.size(16.dp)
+                        )
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text(
+                            text = "Txn Ref: ${debt.transactionRef}",
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            color = Color(0xFF92400E)
+                        )
+                    }
+                }
+            }
+
             Spacer(modifier = Modifier.height(14.dp))
 
-            // Action Row: UPI Launch, Manual Verification Checkbox, Reminder
+            // Action Row: Role-specific action buttons
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                // Checkbox for manual verified toggle
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    modifier = Modifier.clickable { onToggleVerified(!isVerified) }
-                ) {
-                    Checkbox(
-                        checked = isVerified,
-                        onCheckedChange = { onToggleVerified(it) }
-                    )
-                    Spacer(modifier = Modifier.width(4.dp))
-                    Text(
-                        text = "Mark Verified",
-                        style = MaterialTheme.typography.labelSmall,
-                        fontWeight = FontWeight.Medium
-                    )
+                // Left Side Action: Creditor gets "Mark Verified" checkbox
+                if (isOwedToCurrentUser || (!isCurrentUsersDebt && !isOwedToCurrentUser)) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier.clickable { onToggleVerified(!isVerified) }
+                    ) {
+                        Checkbox(
+                            checked = isVerified,
+                            onCheckedChange = { onToggleVerified(it) }
+                        )
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text(
+                            text = if (isVerified) "Settled ✓" else "Verify Receipt",
+                            style = MaterialTheme.typography.labelSmall,
+                            fontWeight = FontWeight.Medium
+                        )
+                    }
+                } else {
+                    // Debtor sees helpful reminder note or "I've paid" text button
+                    if (!isVerified && !isAwaitingConfirmation) {
+                        TextButton(
+                            onClick = { showSendRefDialog = true },
+                            contentPadding = PaddingValues(horizontal = 4.dp, vertical = 2.dp)
+                        ) {
+                            Text(
+                                text = "Paid via cash/app? Send Ref →",
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                color = MaterialTheme.colorScheme.primary
+                            )
+                        }
+                    } else if (isAwaitingConfirmation) {
+                        Text(
+                            text = "Waiting for ${debt.toUserName} to verify",
+                            fontSize = 11.sp,
+                            color = Color(0xFF92400E),
+                            fontWeight = FontWeight.Medium
+                        )
+                    } else {
+                        Spacer(modifier = Modifier.width(1.dp))
+                    }
                 }
 
+                // Right Side Actions
                 Row(
                     horizontalArrangement = Arrangement.spacedBy(6.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     if (!isVerified) {
-                        IconButton(onClick = onSendReminder, modifier = Modifier.size(32.dp)) {
-                            Icon(
-                                imageVector = Icons.Default.NotificationsActive,
-                                contentDescription = "Send Reminder",
-                                tint = Color(0xFFF59E0B),
-                                modifier = Modifier.size(18.dp)
-                            )
+                        // 1. BELL ICON: ONLY shown to the CREDITOR (the person who is owed money) to nudge debtor!
+                        if (isOwedToCurrentUser) {
+                            FilledTonalButton(
+                                onClick = onSendReminder,
+                                shape = RoundedCornerShape(10.dp),
+                                contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
+                                modifier = Modifier.height(34.dp),
+                                colors = ButtonDefaults.filledTonalButtonColors(
+                                    containerColor = Color(0xFFFEF3C7),
+                                    contentColor = Color(0xFFB45309)
+                                )
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.NotificationsActive,
+                                    contentDescription = "Send Reminder",
+                                    tint = Color(0xFFD97706),
+                                    modifier = Modifier.size(16.dp)
+                                )
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Text(
+                                    text = "Remind",
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.Bold
+                                )
+                            }
                         }
 
-                        Button(
-                            onClick = onPayClick,
-                            shape = RoundedCornerShape(10.dp),
-                            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp),
-                            modifier = Modifier.height(34.dp),
-                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF2563EB))
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.OpenInNew,
-                                contentDescription = null,
-                                modifier = Modifier.size(14.dp)
-                            )
-                            Spacer(modifier = Modifier.width(4.dp))
-                            Text(text = "Pay UPI", fontSize = 12.sp)
+                        // 2. VERIFY & SETTLE BUTTON: Shown to CREDITOR when debtor has marked payment sent
+                        if (isOwedToCurrentUser && isAwaitingConfirmation) {
+                            Button(
+                                onClick = { onToggleVerified(true) },
+                                shape = RoundedCornerShape(10.dp),
+                                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp),
+                                modifier = Modifier.height(34.dp),
+                                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF059669))
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.CheckCircle,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(14.dp)
+                                )
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Text(text = "Verify & Settle", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                            }
+                        }
+
+                        // 3. PAY UPI BUTTON: ONLY shown to the DEBTOR (the person who owes money) to pay the creditor!
+                        if (isCurrentUsersDebt) {
+                            Button(
+                                onClick = onPayClick,
+                                shape = RoundedCornerShape(10.dp),
+                                contentPadding = PaddingValues(horizontal = 14.dp, vertical = 4.dp),
+                                modifier = Modifier.height(36.dp),
+                                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF2563EB))
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.OpenInNew,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(15.dp)
+                                )
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text(
+                                    text = "Pay UPI",
+                                    fontSize = 13.sp,
+                                    fontWeight = FontWeight.Bold
+                                )
+                            }
                         }
                     }
 
@@ -540,6 +680,47 @@ fun DebtCardItem(
             }
         }
     }
+
+    // Debtor manual payment reference dialog
+    if (showSendRefDialog) {
+        AlertDialog(
+            onDismissRequest = { showSendRefDialog = false },
+            title = { Text("Payment Confirmation Reference") },
+            text = {
+                Column {
+                    Text(
+                        text = "If you already paid ₹${debt.amount} to ${debt.toUserName} via GPay, PhonePe, Paytm, or Cash, submit the reference below so they can verify.",
+                        style = MaterialTheme.typography.bodySmall
+                    )
+                    Spacer(modifier = Modifier.height(10.dp))
+                    OutlinedTextField(
+                        value = txRefInput,
+                        onValueChange = { txRefInput = it },
+                        label = { Text("UPI Txn Ref / Note (Optional)") },
+                        placeholder = { Text("e.g. UPI329104829 or Cash Paid") },
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(12.dp)
+                    )
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        onRequestConfirmation(txRefInput.trim().ifBlank { "PAID_VIA_UPI" })
+                        showSendRefDialog = false
+                    },
+                    shape = RoundedCornerShape(10.dp)
+                ) {
+                    Text("Notify ${debt.toUserName}")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showSendRefDialog = false }) {
+                    Text("Cancel")
+                }
+            }
+        )
+    }
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -550,10 +731,33 @@ fun AddDebtDialog(
     onDismiss: () -> Unit,
     onConfirm: (from: UserProfile, to: UserProfile, amount: Double, reason: String) -> Unit
 ) {
-    var fromUser by remember { mutableStateOf(members.firstOrNull { it.id != currentUser?.id } ?: members.firstOrNull() ?: UserProfile("USR_1", "Rahul")) }
-    var toUser by remember { mutableStateOf(currentUser ?: members.firstOrNull() ?: UserProfile("USR_ALEX", "Alex")) }
+    val allRoommates = remember(members, currentUser) {
+        val combined = mutableListOf<UserProfile>()
+        currentUser?.let { combined.add(it) }
+        members.forEach { m ->
+            if (combined.none { it.id == m.id }) combined.add(m)
+        }
+        combined.ifEmpty { listOfNotNull(currentUser) }
+    }
+
+    var fromUser by remember {
+        mutableStateOf(
+            allRoommates.firstOrNull { it.id != currentUser?.id }
+                ?: allRoommates.firstOrNull()
+                ?: UserProfile("USR_1", "Roommate")
+        )
+    }
+    var toUser by remember {
+        mutableStateOf(
+            currentUser
+                ?: allRoommates.firstOrNull { it.id != fromUser.id }
+                ?: allRoommates.firstOrNull()
+                ?: UserProfile("USR_ALEX", "Self")
+        )
+    }
     var amountText by remember { mutableStateOf("") }
     var reason by remember { mutableStateOf("") }
+    var errorMessage by remember { mutableStateOf<String?>(null) }
 
     var fromExpanded by remember { mutableStateOf(false) }
     var toExpanded by remember { mutableStateOf(false) }
@@ -581,7 +785,7 @@ fun AddDebtDialog(
                         value = fromUser.name,
                         onValueChange = {},
                         readOnly = true,
-                        label = { Text("Person Who Owes Money (Borrower)") },
+                        label = { Text("Person Who Owes Money (Borrower) *") },
                         trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = fromExpanded) },
                         modifier = Modifier
                             .menuAnchor()
@@ -592,12 +796,13 @@ fun AddDebtDialog(
                         expanded = fromExpanded,
                         onDismissRequest = { fromExpanded = false }
                     ) {
-                        members.forEach { m ->
+                        allRoommates.forEach { m ->
                             DropdownMenuItem(
                                 text = { Text(m.name) },
                                 onClick = {
                                     fromUser = m
                                     fromExpanded = false
+                                    errorMessage = null
                                 }
                             )
                         }
@@ -613,7 +818,7 @@ fun AddDebtDialog(
                         value = toUser.name,
                         onValueChange = {},
                         readOnly = true,
-                        label = { Text("Person to Receive Money (Lender)") },
+                        label = { Text("Person to Receive Money (Lender) *") },
                         trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = toExpanded) },
                         modifier = Modifier
                             .menuAnchor()
@@ -624,12 +829,13 @@ fun AddDebtDialog(
                         expanded = toExpanded,
                         onDismissRequest = { toExpanded = false }
                     ) {
-                        members.forEach { m ->
+                        allRoommates.forEach { m ->
                             DropdownMenuItem(
                                 text = { Text(m.name) },
                                 onClick = {
                                     toUser = m
                                     toExpanded = false
+                                    errorMessage = null
                                 }
                             )
                         }
@@ -638,8 +844,12 @@ fun AddDebtDialog(
 
                 OutlinedTextField(
                     value = amountText,
-                    onValueChange = { amountText = it },
-                    label = { Text("Amount (₹)") },
+                    onValueChange = {
+                        amountText = it
+                        errorMessage = null
+                    },
+                    label = { Text("Amount (₹) *") },
+                    placeholder = { Text("e.g. 500") },
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                     modifier = Modifier.fillMaxWidth(),
                     shape = RoundedCornerShape(12.dp),
@@ -649,20 +859,43 @@ fun AddDebtDialog(
                 OutlinedTextField(
                     value = reason,
                     onValueChange = { reason = it },
-                    label = { Text("Reason / Description") },
-                    placeholder = { Text("e.g. Lent ₹500 for dinner, Grocery share") },
+                    label = { Text("Reason / Description (Optional)") },
+                    placeholder = { Text("e.g. Lent for dinner, Groceries, Electricity bill") },
                     modifier = Modifier.fillMaxWidth(),
                     shape = RoundedCornerShape(12.dp)
                 )
+
+                if (errorMessage != null) {
+                    Surface(
+                        shape = RoundedCornerShape(8.dp),
+                        color = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.6f),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text(
+                            text = errorMessage ?: "",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.error,
+                            fontWeight = FontWeight.SemiBold,
+                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp)
+                        )
+                    }
+                }
             }
         },
         confirmButton = {
             Button(
                 onClick = {
                     val amount = amountText.toDoubleOrNull() ?: 0.0
-                    if (amount > 0 && reason.isNotBlank()) {
-                        onConfirm(fromUser, toUser, amount, reason.trim())
+                    if (amount <= 0.0) {
+                        errorMessage = "Please enter an amount greater than ₹0."
+                        return@Button
                     }
+                    if (fromUser.id == toUser.id) {
+                        errorMessage = "Borrower and Lender cannot be the same roommate. Please select different people."
+                        return@Button
+                    }
+                    val finalReason = reason.trim().ifBlank { "Direct loan / settlement" }
+                    onConfirm(fromUser, toUser, amount, finalReason)
                 },
                 shape = RoundedCornerShape(12.dp)
             ) {

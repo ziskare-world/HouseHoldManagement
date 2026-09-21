@@ -3,10 +3,12 @@ package com.example.ui.viewmodel
 import android.app.Application
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.example.BuildConfig
 import com.example.data.local.model.BudgetConfig
 import com.example.data.local.model.ChoreTask
 import com.example.data.local.model.ExpenseItem
 import com.example.data.local.model.Household
+import com.example.data.local.model.HouseholdNotification
 import com.example.data.local.model.SavingsGoal
 import com.example.data.local.model.SettlementDebt
 import com.example.data.local.model.UserProfile
@@ -14,6 +16,8 @@ import com.example.data.remote.SupabaseAuthState
 import com.example.data.remote.SupabaseUser
 import com.example.data.repository.RoomieRepository
 import com.example.notification.ChoreNotificationHelper
+import com.example.util.AppUpdateInfo
+import com.example.util.AppUpdateManager
 import com.example.util.DateUtils
 import com.example.util.UpiPaymentHelper
 import com.example.util.NetworkConnectivityObserver
@@ -53,6 +57,7 @@ class RoomieViewModel(application: Application) : AndroidViewModel(application) 
     val repository = RoomieRepository.getInstance(application)
     private val context = application.applicationContext
     val connectivityObserver = NetworkConnectivityObserver(application)
+    val appUpdateManager = AppUpdateManager(application.applicationContext)
 
     private val sessionPrefs = application.getSharedPreferences("roomie_session_prefs", android.content.Context.MODE_PRIVATE)
 
@@ -72,6 +77,9 @@ class RoomieViewModel(application: Application) : AndroidViewModel(application) 
 
     private val _statusMessage = MutableStateFlow<String?>(null)
     val statusMessage: StateFlow<String?> = _statusMessage.asStateFlow()
+
+    private val _appUpdateInfo = MutableStateFlow<AppUpdateInfo?>(null)
+    val appUpdateInfo: StateFlow<AppUpdateInfo?> = _appUpdateInfo.asStateFlow()
 
     val authState: StateFlow<SupabaseAuthState> = repository.syncManager.authManager.authState
 
@@ -129,6 +137,22 @@ class RoomieViewModel(application: Application) : AndroidViewModel(application) 
         }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), null)
 
+    val notifications: StateFlow<List<HouseholdNotification>> = currentUser
+        .flatMapLatest { user ->
+            val hid = user?.householdId ?: ""
+            val uid = user?.id ?: ""
+            if (hid.isNotBlank() && uid.isNotBlank()) repository.getNotificationsForUser(hid, uid) else flowOf(emptyList())
+        }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    val unreadNotificationsCount: StateFlow<Int> = currentUser
+        .flatMapLatest { user ->
+            val hid = user?.householdId ?: ""
+            val uid = user?.id ?: ""
+            if (hid.isNotBlank() && uid.isNotBlank()) repository.getUnreadNotificationsCount(hid, uid) else flowOf(0)
+        }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), 0)
+
     val budgetStatus: StateFlow<BudgetStatus> = combine(allExpenses, currentBudgetConfig, household) { expenses, budgetConfig, householdObj ->
         val curMonth = DateUtils.getCurrentMonthYearKey()
         val monthExpenses = expenses.filter { it.monthYearKey == curMonth }
@@ -167,6 +191,38 @@ class RoomieViewModel(application: Application) : AndroidViewModel(application) 
                     syncWithSupabase()
                 }
             }
+        }
+
+        // Check for app updates from GitHub on launch
+        viewModelScope.launch {
+            checkForAppUpdate(isManual = false)
+        }
+    }
+
+    fun checkForAppUpdate(isManual: Boolean = false) {
+        viewModelScope.launch {
+            try {
+                val info = appUpdateManager.checkForUpdate()
+                if (info != null && info.hasUpdate) {
+                    _appUpdateInfo.value = info
+                } else if (isManual) {
+                    _statusMessage.value = "You're on the latest version (v${BuildConfig.VERSION_NAME})"
+                }
+            } catch (e: Exception) {
+                if (isManual) {
+                    _statusMessage.value = "Failed to check update: ${e.message}"
+                }
+            }
+        }
+    }
+
+    fun dismissUpdateDialog() {
+        _appUpdateInfo.value = null
+    }
+
+    fun launchAppUpdate() {
+        _appUpdateInfo.value?.let { info ->
+            appUpdateManager.launchUpdateDownload(info)
         }
     }
 
@@ -336,13 +392,28 @@ class RoomieViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     fun sendChoreNotificationAlert(chore: ChoreTask) {
+        val user = currentUser.value
+        if (user != null && chore.assignedToUserId.isNotBlank()) {
+            viewModelScope.launch {
+                repository.createAndDispatchNotification(
+                    householdId = chore.householdId.ifBlank { user.householdId },
+                    sender = user,
+                    targetUserId = chore.assignedToUserId,
+                    targetUserName = chore.assignedToUserName,
+                    type = "CHORE_REMINDER",
+                    title = "🧹 Chore Alert: ${chore.title}",
+                    message = "${user.name} reminded you about today's chore '${chore.title}' scheduled for ${chore.scheduledTime}.",
+                    relatedEntityId = chore.id
+                )
+            }
+        }
         ChoreNotificationHelper.showChoreReminder(
             context,
             chore.id.hashCode(),
-            "🧹 Chore Alert: ${chore.title}",
-            "${chore.assignedToUserName}, it's your turn for ${chore.title} (${chore.scheduledTime})"
+            "🧹 Chore Alert Sent: ${chore.title}",
+            "Nudge dispatched to ${chore.assignedToUserName} for ${chore.scheduledTime}."
         )
-        _statusMessage.value = "Notification reminder sent to ${chore.assignedToUserName}"
+        _statusMessage.value = "🔔 Reminder alert dispatched to ${chore.assignedToUserName}!"
     }
 
     fun deleteChore(choreId: String) {
@@ -360,9 +431,28 @@ class RoomieViewModel(application: Application) : AndroidViewModel(application) 
         reason: String
     ) {
         viewModelScope.launch {
-            val user = currentUser.value ?: return@launch
-            repository.addDebt(fromUser, toUser, amount, reason, user.householdId)
-            _statusMessage.value = "Settlement debt of ₹$amount recorded"
+            val user = currentUser.value ?: repository.getCurrentUserDirect()
+            val hid = user?.householdId?.takeIf { it.isNotBlank() }
+                ?: fromUser.householdId.takeIf { it.isNotBlank() }
+                ?: toUser.householdId.takeIf { it.isNotBlank() }
+                ?: "HOUSE_FLAT_402"
+            val finalReason = reason.trim().ifBlank { "Direct loan / split settlement" }
+            repository.addDebt(fromUser, toUser, amount, finalReason, hid)
+
+            // If lender recorded debt for borrower, notify borrower
+            if (user != null && fromUser.id != user.id) {
+                repository.createAndDispatchNotification(
+                    householdId = hid,
+                    sender = user,
+                    targetUserId = fromUser.id,
+                    targetUserName = fromUser.name,
+                    type = "DEBT_REMINDER",
+                    title = "💸 New Split / Debt Added",
+                    message = "${user.name} added ₹$amount for '$finalReason'.",
+                    relatedEntityId = ""
+                )
+            }
+            _statusMessage.value = "Recorded debt: ${fromUser.name} owes ₹$amount to ${toUser.name}"
         }
     }
 
@@ -370,6 +460,19 @@ class RoomieViewModel(application: Application) : AndroidViewModel(application) 
         viewModelScope.launch {
             val newStatus = if (isVerified) "VERIFIED" else "PENDING"
             repository.updateDebtStatus(debt.id, newStatus)
+            val user = currentUser.value
+            if (isVerified && user != null && debt.fromUserId.isNotBlank()) {
+                repository.createAndDispatchNotification(
+                    householdId = debt.householdId.ifBlank { user.householdId },
+                    sender = user,
+                    targetUserId = debt.fromUserId,
+                    targetUserName = debt.fromUserName,
+                    type = "PAYMENT_VERIFIED",
+                    title = "✅ Payment Verified & Settled!",
+                    message = "${user.name} confirmed your payment of ₹${debt.amount} for '${debt.reason}'.",
+                    relatedEntityId = debt.id
+                )
+            }
             _statusMessage.value = if (isVerified) "Payment verified & settled!" else "Payment marked pending"
         }
     }
@@ -377,6 +480,19 @@ class RoomieViewModel(application: Application) : AndroidViewModel(application) 
     fun requestDebtVerification(debt: SettlementDebt, txRef: String) {
         viewModelScope.launch {
             repository.updateDebtStatus(debt.id, "PAID_PENDING_CONFIRMATION", txRef)
+            val user = currentUser.value
+            if (user != null && debt.toUserId.isNotBlank()) {
+                repository.createAndDispatchNotification(
+                    householdId = debt.householdId.ifBlank { user.householdId },
+                    sender = user,
+                    targetUserId = debt.toUserId,
+                    targetUserName = debt.toUserName,
+                    type = "PAYMENT_PENDING_CONFIRMATION",
+                    title = "💵 Payment Sent by ${user.name}",
+                    message = "${user.name} sent ₹${debt.amount} for '${debt.reason}' (Ref: ${txRef.ifBlank { "UPI" }}). Tap to verify & settle.",
+                    relatedEntityId = debt.id
+                )
+            }
             _statusMessage.value = "Payment submitted. Awaiting verification from ${debt.toUserName}."
         }
     }
@@ -396,13 +512,42 @@ class RoomieViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     fun sendDebtReminder(debt: SettlementDebt) {
+        val user = currentUser.value
+        if (user != null && debt.fromUserId.isNotBlank()) {
+            viewModelScope.launch {
+                repository.createAndDispatchNotification(
+                    householdId = debt.householdId.ifBlank { user.householdId },
+                    sender = user,
+                    targetUserId = debt.fromUserId,
+                    targetUserName = debt.fromUserName,
+                    type = "DEBT_REMINDER",
+                    title = "💸 UPI Settlement Reminder from ${user.name}",
+                    message = "Reminder to pay ₹${debt.amount} for '${debt.reason}' via UPI to ${debt.toUserName} (${debt.toUserUpiId.ifBlank { "UPI" }}).",
+                    relatedEntityId = debt.id
+                )
+            }
+        }
         ChoreNotificationHelper.showSettlementAlert(
             context,
             debt.id.hashCode(),
-            "💸 Money Settlement Reminder",
-            "Reminder: ${debt.fromUserName}, please settle ₹${debt.amount} to ${debt.toUserName} (UPI: ${debt.toUserUpiId.ifBlank { "N/A" }})"
+            "💸 Money Settlement Reminder Sent",
+            "Nudge dispatched to ${debt.fromUserName} for ₹${debt.amount}."
         )
-        _statusMessage.value = "Reminder alert sent to ${debt.fromUserName}"
+        _statusMessage.value = "🔔 Payment reminder sent to ${debt.fromUserName}!"
+    }
+
+    fun markNotificationAsRead(id: String) {
+        viewModelScope.launch {
+            repository.markNotificationAsRead(id)
+        }
+    }
+
+    fun markAllNotificationsAsRead() {
+        viewModelScope.launch {
+            val user = currentUser.value ?: return@launch
+            repository.markAllNotificationsAsRead(user.householdId, user.id)
+            _statusMessage.value = "All notifications marked as read"
+        }
     }
 
     // --- Savings Goals ---

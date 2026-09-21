@@ -7,6 +7,7 @@ import com.example.data.local.model.BudgetConfig
 import com.example.data.local.model.ChoreTask
 import com.example.data.local.model.ExpenseItem
 import com.example.data.local.model.Household
+import com.example.data.local.model.HouseholdNotification
 import com.example.data.local.model.SavingsGoal
 import com.example.data.local.model.SettlementDebt
 import com.example.data.local.model.UserProfile
@@ -67,6 +68,12 @@ class RoomieRepository(
     fun getBudgetConfig(monthKey: String, householdId: String): Flow<BudgetConfig?> =
         dao.getBudgetConfig(monthKey, householdId)
 
+    fun getNotificationsForUser(householdId: String, userId: String): Flow<List<HouseholdNotification>> =
+        dao.getNotificationsForUser(householdId, userId)
+
+    fun getUnreadNotificationsCount(householdId: String, userId: String): Flow<Int> =
+        dao.getUnreadNotificationsCount(householdId, userId)
+
     // --- Clean Slate: Purge Legacy Sample Mock Data ---
     suspend fun purgeSampleMockDataIfPresent() {
         val expenses = dao.getAllExpensesDirect()
@@ -95,6 +102,7 @@ class RoomieRepository(
             dao.clearAllChores()
             dao.clearAllDebts()
             dao.clearAllSavingsGoals()
+            dao.clearAllNotifications()
         }
         if (mockUser?.id == "USR_ALEX" || mockUser?.householdId == "HOUSE_FLAT_402") {
             dao.clearAllUsers()
@@ -105,6 +113,8 @@ class RoomieRepository(
     suspend fun clearAllChores() {
         dao.clearAllChores()
     }
+
+    suspend fun getCurrentUserDirect(): UserProfile? = dao.getCurrentUserDirect()
 
     suspend fun regenerateInviteCode(householdId: String): String {
         val newCode = "RV" + UUID.randomUUID().toString().replace("-", "").take(4).uppercase()
@@ -449,6 +459,44 @@ class RoomieRepository(
         }
     }
 
+    suspend fun createAndDispatchNotification(
+        householdId: String,
+        sender: UserProfile,
+        targetUserId: String,
+        targetUserName: String,
+        type: String,
+        title: String,
+        message: String,
+        relatedEntityId: String = ""
+    ) {
+        val notif = HouseholdNotification(
+            id = UUID.randomUUID().toString(),
+            householdId = householdId,
+            senderUserId = sender.id,
+            senderUserName = sender.name,
+            targetUserId = targetUserId,
+            targetUserName = targetUserName,
+            type = type,
+            title = title,
+            message = message,
+            relatedEntityId = relatedEntityId,
+            isRead = false,
+            createdAt = System.currentTimeMillis()
+        )
+        dao.insertNotification(notif)
+        backgroundScope.launch {
+            syncManager.dataStore.pushNotification(syncManager.supabaseUrl, syncManager.supabaseAnonKey, notif)
+        }
+    }
+
+    suspend fun markNotificationAsRead(notificationId: String) {
+        dao.markNotificationAsRead(notificationId)
+    }
+
+    suspend fun markAllNotificationsAsRead(householdId: String, userId: String) {
+        dao.markAllNotificationsAsRead(householdId, userId)
+    }
+
     suspend fun switchHousehold(inviteCode: String, householdName: String, currentUser: UserProfile) {
         val householdId = "HOUSE_" + inviteCode.uppercase().trim()
         val household = Household(
@@ -516,6 +564,7 @@ class RoomieRepository(
         dao.clearAllChores()
         dao.clearAllDebts()
         dao.clearAllSavingsGoals()
+        dao.clearAllNotifications()
         dao.clearAllUsers()
         dao.clearAllHouseholds()
 

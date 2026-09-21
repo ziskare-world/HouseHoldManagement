@@ -46,7 +46,10 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.data.local.model.ChoreTask
+import com.example.data.local.model.HouseholdNotification
 import com.example.data.local.model.UserProfile
+import com.example.ui.components.AppUpdateDialog
+import com.example.util.AppUpdateInfo
 import com.example.ui.screens.ChoresScreen
 import com.example.ui.screens.DashboardScreen
 import com.example.ui.screens.ExpensesScreen
@@ -81,6 +84,9 @@ fun MainScaffold(
     val budgetStatus by viewModel.budgetStatus.collectAsState()
     val isSyncing by viewModel.isSyncing.collectAsState()
     val selectedMonthKey by viewModel.selectedMonthKey.collectAsState()
+    val appUpdateInfo by viewModel.appUpdateInfo.collectAsState()
+    val notifications by viewModel.notifications.collectAsState()
+    val unreadNotificationsCount by viewModel.unreadNotificationsCount.collectAsState()
 
     val pendingChoresCount = remember(allChores) {
         allChores.count { it.status == "PENDING" }
@@ -198,6 +204,8 @@ fun MainScaffold(
                                 budgetStatus = budgetStatus,
                                 isSyncing = isSyncing,
                                 selectedMonthKey = selectedMonthKey,
+                                notifications = notifications,
+                                unreadNotificationsCount = unreadNotificationsCount,
                                 onLaunchUpiPayment = onLaunchUpiPayment,
                                 onShowMessage = { msg ->
                                     scope.launch { snackbarHostState.showSnackbar(msg) }
@@ -262,6 +270,8 @@ fun MainScaffold(
                                 budgetStatus = budgetStatus,
                                 isSyncing = isSyncing,
                                 selectedMonthKey = selectedMonthKey,
+                                notifications = notifications,
+                                unreadNotificationsCount = unreadNotificationsCount,
                                 onLaunchUpiPayment = onLaunchUpiPayment,
                                 onShowMessage = { msg ->
                                     scope.launch { snackbarHostState.showSnackbar(msg) }
@@ -271,6 +281,17 @@ fun MainScaffold(
                     }
                 }
             }
+        }
+    }
+
+    // GitHub In-App Mandatory / Optional Update Dialog (Always visible on top of everything)
+    appUpdateInfo?.let { updateInfo ->
+        if (updateInfo.hasUpdate) {
+            AppUpdateDialog(
+                updateInfo = updateInfo,
+                onUpdateClick = { viewModel.launchAppUpdate() },
+                onDismiss = { viewModel.dismissUpdateDialog() }
+            )
         }
     }
 }
@@ -290,6 +311,8 @@ fun RenderScreen(
     budgetStatus: com.example.ui.viewmodel.BudgetStatus,
     isSyncing: Boolean,
     selectedMonthKey: String,
+    notifications: List<HouseholdNotification> = emptyList(),
+    unreadNotificationsCount: Int = 0,
     onLaunchUpiPayment: (debt: com.example.data.local.model.SettlementDebt, packageName: String?) -> Unit,
     onShowMessage: (String) -> Unit
 ) {
@@ -310,6 +333,9 @@ fun RenderScreen(
                 sundayRotationChore = sundayChore,
                 pendingDebts = allDebts.filter { it.status != "VERIFIED" },
                 expenses = allExpenses,
+                notifications = notifications,
+                unreadNotificationsCount = unreadNotificationsCount,
+                members = householdMembers,
                 isSyncing = isSyncing,
                 onNavigate = { tab -> viewModel.setTab(tab) },
                 onQuickAddExpense = { viewModel.setTab(ScreenTab.EXPENSES) },
@@ -330,6 +356,20 @@ fun RenderScreen(
                 onSendAlert = { chore ->
                     viewModel.sendChoreReminder(chore)
                     onShowMessage("Push alert sent for '${chore.title}' to ${chore.assignedToUserName}!")
+                },
+                onSendDebtReminder = { debt ->
+                    viewModel.sendDebtReminder(debt)
+                    onShowMessage("Payment reminder pushed to ${debt.fromUserName}!")
+                },
+                onVerifyDebt = { debt, isVerified ->
+                    viewModel.verifySettlement(debt, isVerified)
+                    onShowMessage(if (isVerified) "Payment verified and settled!" else "Marked as pending")
+                },
+                onMarkNotificationRead = { id ->
+                    viewModel.markNotificationAsRead(id)
+                },
+                onMarkAllNotificationsRead = {
+                    viewModel.markAllNotificationsAsRead()
                 }
             )
         }
@@ -489,6 +529,9 @@ fun RenderScreen(
                 },
                 onTestConnection = { cb ->
                     viewModel.testSupabaseConnection(cb)
+                },
+                onCheckAppUpdate = {
+                    viewModel.checkForAppUpdate(isManual = true)
                 }
             )
         }

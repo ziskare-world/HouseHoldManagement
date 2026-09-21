@@ -81,6 +81,13 @@ class SupabaseSyncManager(context: Context) {
                 dataStore.pushBudgetConfig(supabaseUrl, supabaseAnonKey, budget)
             }
 
+            // 8. Household Notifications & Alerts
+            val currentUserId = dao.getCurrentUserDirect()?.id ?: ""
+            if (currentUserId.isNotBlank()) {
+                val notifs = dao.getNotificationsForUserDirect(householdId, currentUserId)
+                notifs.forEach { dataStore.pushNotification(supabaseUrl, supabaseAnonKey, it) }
+            }
+
             lastSyncTimestamp = System.currentTimeMillis()
             true
         } catch (e: Exception) {
@@ -99,6 +106,24 @@ class SupabaseSyncManager(context: Context) {
         val res = dataStore.pullAllDataFromSupabase(supabaseUrl, supabaseAnonKey, householdId, dao)
         if (res.isSuccess) {
             lastSyncTimestamp = System.currentTimeMillis()
+            // Check for unread alerts directed to the current user and display notification
+            try {
+                val currentUserId = dao.getCurrentUserDirect()?.id ?: ""
+                if (currentUserId.isNotBlank()) {
+                    val unread = dao.getNotificationsForUserDirect(householdId, currentUserId).filter { !it.isRead }
+                    if (unread.isNotEmpty()) {
+                        val latest = unread.first()
+                        com.example.notification.ChoreNotificationHelper.showNotificationAlert(
+                            context,
+                            latest.id.hashCode(),
+                            latest.title,
+                            latest.message
+                        )
+                    }
+                }
+            } catch (e: Exception) {
+                // Ignore alert display exception
+            }
         }
         res
     }

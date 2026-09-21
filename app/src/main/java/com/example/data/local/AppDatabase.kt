@@ -21,9 +21,10 @@ import com.example.data.local.model.UserProfile
         ChoreTask::class,
         SettlementDebt::class,
         SavingsGoal::class,
-        BudgetConfig::class
+        BudgetConfig::class,
+        com.example.data.local.model.HouseholdNotification::class
     ],
-    version = 1,
+    version = 2,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
