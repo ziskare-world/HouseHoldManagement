@@ -42,24 +42,17 @@ jobs:
       - name: Grant Execute Permission to Gradlew
         run: chmod +x gradlew
 
-      - name: Build Android APKs
-        run: ./gradlew assembleDebug assembleRelease --stacktrace --no-daemon
+      - name: Build Android APK
+        run: ./gradlew assembleDebug --stacktrace --no-daemon
 
       - name: Prepare APK Release Directory
         run: |
           mkdir -p release-apks
           DEBUG_APK=$(find app/build/outputs/apk/debug -name "*.apk" | head -n 1)
-          RELEASE_APK=$(find app/build/outputs/apk/release -name "*.apk" | head -n 1)
-
-          if [ -n "$RELEASE_APK" ] && [ -f "$RELEASE_APK" ]; then
-            cp "$RELEASE_APK" release-apks/RoomieVault-v1.1.apk
-            cp "$RELEASE_APK" release-apks/app-release.apk
-          elif [ -n "$DEBUG_APK" ] && [ -f "$DEBUG_APK" ]; then
-            cp "$DEBUG_APK" release-apks/RoomieVault-v1.1.apk
-            cp "$DEBUG_APK" release-apks/app-release.apk
-          fi
 
           if [ -n "$DEBUG_APK" ] && [ -f "$DEBUG_APK" ]; then
+            cp "$DEBUG_APK" release-apks/RoomieVault-v1.1.apk
+            cp "$DEBUG_APK" release-apks/app-release.apk
             cp "$DEBUG_APK" release-apks/app-debug.apk
           fi
 
@@ -76,11 +69,11 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          gh release delete v1.1 --yes || true
-          git tag -d v1.1 || true
-          git push origin :refs/tags/v1.1 || true
+          gh release delete v1.1 --yes 2>/dev/null || true
+          git tag -d v1.1 2>/dev/null || true
+          git push origin :refs/tags/v1.1 2>/dev/null || true
 
-          gh release create v1.1 release-apks/* \
+          gh release create v1.1 release-apks/*.apk \
             --title "RoomieVault v1.1 Release" \
             --notes "### 🚀 RoomieVault v1.1 Release
           - **Multi-User Role Permissions**: Debtor sees 'Pay UPI', Creditor sees 'Bell Reminder' and 'Verify & Settle'
