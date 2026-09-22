@@ -60,7 +60,14 @@ class SupabaseDataStore(
                 }
             }
         } catch (e: Exception) {
-            Pair(false, "Connection error: ${e.localizedMessage ?: "Unknown error"}")
+            val msg = if (e is java.net.UnknownHostException || e.message?.contains("Unable to resolve host", ignoreCase = true) == true) {
+                "Cloud host not found. Please verify your Supabase project URL in settings."
+            } else if (e is java.net.SocketTimeoutException) {
+                "Connection timed out. Check your internet connection."
+            } else {
+                "Connection error: ${e.localizedMessage ?: "Unknown error"}"
+            }
+            Pair(false, msg)
         }
     }
 

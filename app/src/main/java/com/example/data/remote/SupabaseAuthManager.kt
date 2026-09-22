@@ -193,7 +193,7 @@ class SupabaseAuthManager(private val context: Context) {
             }
         } catch (e: Exception) {
             Log.e("SupabaseAuth", "Sign up exception", e)
-            val msg = e.localizedMessage ?: "Network connection failed"
+            val msg = formatExceptionMessage(e, "Sign up failed")
             _authState.value = SupabaseAuthState.Error(msg)
             Result.failure(Exception(msg))
         }
@@ -278,7 +278,7 @@ class SupabaseAuthManager(private val context: Context) {
             }
         } catch (e: Exception) {
             Log.e("SupabaseAuth", "Sign in exception", e)
-            val msg = e.localizedMessage ?: "Failed to connect to Supabase"
+            val msg = formatExceptionMessage(e, "Failed to connect to Supabase")
             _authState.value = SupabaseAuthState.Error(msg)
             Result.failure(Exception(msg))
         }
@@ -396,6 +396,18 @@ class SupabaseAuthManager(private val context: Context) {
             )
         } catch (e: Exception) {
             fallback
+        }
+    }
+
+    private fun formatExceptionMessage(e: Exception, defaultMsg: String): String {
+        val msg = e.localizedMessage.orEmpty()
+        return when {
+            e is java.net.UnknownHostException || msg.contains("Unable to resolve host", ignoreCase = true) || msg.contains("No address associated", ignoreCase = true) ->
+                "Cloud server unreachable (no internet or cloud server paused). You can tap 'Continue in Local / Offline Mode' below to use RoomieVault offline, or update Cloud Settings."
+            e is java.net.SocketTimeoutException ->
+                "Cloud connection timed out. Check your internet connection or use Local / Offline Mode."
+            msg.isNotBlank() -> msg
+            else -> defaultMsg
         }
     }
 }

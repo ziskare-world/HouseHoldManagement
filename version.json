@@ -1,10 +1,10 @@
 {
-  "versionCode": 2,
-  "versionName": "1.1",
+  "versionCode": 3,
+  "versionName": "1.2",
   "minSupportedVersionCode": 1,
   "isMandatory": true,
-  "title": "RoomieVault v1.1 Mandatory Update",
-  "description": "• Fixed Giving Money & Debt Recording in Splits screen\n• Added GitHub In-App Auto-Update system\n• Added 3-roommate Daily Work Roster\n• Added September & multi-month dynamic expense tracking\n• Expense & Chore editing enhancements",
-  "downloadUrl": "https://github.com/ziskare-world/HouseHoldManagement/releases/latest",
-  "directApkUrl": "https://github.com/ziskare-world/HouseHoldManagement/releases/latest/download/app-debug.apk"
+  "title": "RoomieVault v1.2 Update",
+  "description": "• Resolved 'Unable to resolve host' cloud server issue\n• Added 1-click 'Continue in Local / Offline Mode' without cloud requirement\n• Added Cloud Server Settings dialog to customize Supabase backend\n• Enhanced offline resilience for splits, Sunday chores & UPI payments",
+  "downloadUrl": "https://github.com/ziskare-world/HouseHoldManagement/releases/tag/v1.2",
+  "directApkUrl": "https://github.com/ziskare-world/HouseHoldManagement/releases/download/v1.2/RoomieVault-v1.2.apk"
 }

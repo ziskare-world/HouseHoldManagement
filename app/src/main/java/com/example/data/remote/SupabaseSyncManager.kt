@@ -15,22 +15,15 @@ class SupabaseSyncManager(private val context: Context) {
     val dataStore = SupabaseDataStore(context, authManager)
 
     var supabaseUrl: String
-        get() = prefs.getString("supabase_url", "https://gxpxbnrehrawxwgzdqqm.supabase.co")
-            ?: "https://gxpxbnrehrawxwgzdqqm.supabase.co"
+        get() = prefs.getString("supabase_url", "") ?: ""
         set(value) = prefs.edit().putString("supabase_url", value.trim()).apply()
 
     var supabaseAnonKey: String
-        get() {
-            val key = prefs.getString("supabase_anon_key", "sb_publishable_pZIu3QSAgoZMWBjVkqCHFw_zOIRng-F")
-                ?: "sb_publishable_pZIu3QSAgoZMWBjVkqCHFw_zOIRng-F"
-            return if (key == "sb-anon-key-placeholder" || key.isBlank()) {
-                "sb_publishable_pZIu3QSAgoZMWBjVkqCHFw_zOIRng-F"
-            } else key
-        }
+        get() = prefs.getString("supabase_anon_key", "") ?: ""
         set(value) = prefs.edit().putString("supabase_anon_key", value.trim()).apply()
 
     var isSyncEnabled: Boolean
-        get() = prefs.getBoolean("supabase_sync_enabled", true)
+        get() = prefs.getBoolean("supabase_sync_enabled", false) && authManager.isUserLoggedIn && supabaseUrl.isNotBlank()
         set(value) = prefs.edit().putBoolean("supabase_sync_enabled", value).apply()
 
     var lastSyncTimestamp: Long

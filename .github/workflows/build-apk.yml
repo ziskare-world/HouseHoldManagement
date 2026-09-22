@@ -51,6 +51,7 @@ jobs:
           DEBUG_APK=$(find app/build/outputs/apk/debug -name "*.apk" | head -n 1)
 
           if [ -n "$DEBUG_APK" ] && [ -f "$DEBUG_APK" ]; then
+            cp "$DEBUG_APK" release-apks/RoomieVault-v1.2.apk
             cp "$DEBUG_APK" release-apks/RoomieVault-v1.1.apk
             cp "$DEBUG_APK" release-apks/app-release.apk
             cp "$DEBUG_APK" release-apks/app-debug.apk
@@ -61,24 +62,22 @@ jobs:
       - name: Upload APK Artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: RoomieVault-v1.1-APK
+          name: RoomieVault-v1.2-APK
           path: release-apks/*.apk
           retention-days: 30
 
-      - name: Publish GitHub Release v1.1
+      - name: Publish GitHub Release v1.2
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          gh release delete v1.1 --yes 2>/dev/null || true
-          git tag -d v1.1 2>/dev/null || true
-          git push origin :refs/tags/v1.1 2>/dev/null || true
+          gh release delete v1.2 --yes 2>/dev/null || true
+          git tag -d v1.2 2>/dev/null || true
+          git push origin :refs/tags/v1.2 2>/dev/null || true
 
-          gh release create v1.1 release-apks/*.apk \
-            --title "RoomieVault v1.1 Release" \
-            --notes "### 🚀 RoomieVault v1.1 Release
-          - **Multi-User Role Permissions**: Debtor sees 'Pay UPI', Creditor sees 'Bell Reminder' and 'Verify & Settle'
-          - **Direct UPI Integration**: Pay roommates directly via Google Pay, PhonePe, Paytm, BHIM, or default UPI apps
-          - **Today's Chore Work Roster**: Today's work distribution with 'My Duties' vs 'Roommates' Duties' and 1-tap Bell nudges
-          - **Expense Transparency**: Tap any expense card to inspect per-head roommate share breakdowns
-          - **Cross-Device Push Alerts**: Instant notification center & Android heads-up alerts
-          - **GitHub In-App Auto-Update**: Seamless update checks and 1-tap download inside the app"
+          gh release create v1.2 release-apks/*.apk \
+            --title "RoomieVault v1.2 Release" \
+            --notes "### 🚀 RoomieVault v1.2 Release
+          - **Offline First & Error Resolution**: Fixed 'Unable to resolve host' cloud server issue with graceful offline fallback
+          - **1-Click Local Mode**: Added 'Continue in Local / Offline Mode' button to use all features without needing a cloud account
+          - **Cloud Server Settings**: Direct configuration modal on login screen to customize Supabase project URL and keys
+          - **Full Feature Suite**: Split expenses, Sunday chore rotations, 1-tap UPI payments, and receipt viewer all operational locally"

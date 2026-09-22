@@ -31,6 +31,10 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.filled.Bolt
+import androidx.compose.material.icons.filled.PhoneAndroid
+import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.CleaningServices
@@ -104,6 +108,10 @@ fun LoginScreen(
         onResult: (Boolean, String) -> Unit
     ) -> Unit,
     onForgotPassword: ((email: String, onResult: (Boolean, String) -> Unit) -> Unit)? = null,
+    onContinueOffline: (name: String, householdName: String, householdCode: String, upiId: String) -> Unit = { _, _, _, _ -> },
+    currentSupabaseUrl: String = "",
+    currentSupabaseKey: String = "",
+    onUpdateSupabaseConfig: ((String, String) -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
     var selectedTab by remember { mutableIntStateOf(0) } // 0 = Sign In, 1 = Sign Up
@@ -121,6 +129,9 @@ fun LoginScreen(
     var successMessage by remember { mutableStateOf<String?>(null) }
 
     var showForgotPasswordDialog by remember { mutableStateOf(false) }
+    var showCloudConfigDialog by remember { mutableStateOf(false) }
+    var configUrl by remember(currentSupabaseUrl) { mutableStateOf(currentSupabaseUrl) }
+    var configKey by remember(currentSupabaseKey) { mutableStateOf(currentSupabaseKey) }
 
     val focusManager = LocalFocusManager.current
     val scrollState = rememberScrollState()
@@ -187,7 +198,30 @@ fun LoginScreen(
                 textAlign = TextAlign.Center
             )
 
-            Spacer(modifier = Modifier.height(28.dp))
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.End
+            ) {
+                TextButton(
+                    onClick = { showCloudConfigDialog = true }
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Settings,
+                        contentDescription = "Cloud Settings",
+                        modifier = Modifier.size(16.dp),
+                        tint = MaterialTheme.colorScheme.primary
+                    )
+                    Spacer(modifier = Modifier.width(4.dp))
+                    Text(
+                        text = "Cloud Server Settings",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.primary,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                }
+            }
+
+            Spacer(modifier = Modifier.height(8.dp))
 
             // Main Auth Card
             Card(
@@ -266,12 +300,41 @@ fun LoginScreen(
                                 .fillMaxWidth()
                                 .padding(bottom = 12.dp)
                         ) {
-                            Text(
-                                text = errorMessage ?: "",
-                                color = MaterialTheme.colorScheme.onErrorContainer,
-                                style = MaterialTheme.typography.bodySmall,
-                                modifier = Modifier.padding(12.dp)
-                            )
+                            Column(modifier = Modifier.padding(12.dp)) {
+                                Text(
+                                    text = errorMessage ?: "",
+                                    color = MaterialTheme.colorScheme.onErrorContainer,
+                                    style = MaterialTheme.typography.bodySmall
+                                )
+                                val isHostOrNetworkErr = errorMessage?.contains("unreachable", ignoreCase = true) == true ||
+                                        errorMessage?.contains("host", ignoreCase = true) == true ||
+                                        errorMessage?.contains("offline", ignoreCase = true) == true ||
+                                        errorMessage?.contains("connection", ignoreCase = true) == true
+                                if (isHostOrNetworkErr) {
+                                    Spacer(modifier = Modifier.height(8.dp))
+                                    Button(
+                                        onClick = {
+                                            val finalName = fullName.trim().ifBlank { email.substringBefore("@").ifBlank { "Roommate" } }
+                                            val finalHName = householdName.trim().ifBlank { "My Household" }
+                                            val finalCode = householdCode.trim().ifBlank { "FLAT402" }
+                                            onContinueOffline(finalName, finalHName, finalCode, upiId.trim())
+                                        },
+                                        colors = ButtonDefaults.buttonColors(
+                                            containerColor = MaterialTheme.colorScheme.primary
+                                        ),
+                                        shape = RoundedCornerShape(10.dp),
+                                        modifier = Modifier.fillMaxWidth()
+                                    ) {
+                                        Icon(Icons.Default.Bolt, contentDescription = null, modifier = Modifier.size(16.dp))
+                                        Spacer(modifier = Modifier.width(6.dp))
+                                        Text(
+                                            text = "Continue in Local / Offline Mode",
+                                            fontWeight = FontWeight.Bold,
+                                            fontSize = 13.sp
+                                        )
+                                    }
+                                }
+                            }
                         }
                     }
 
@@ -560,6 +623,48 @@ fun LoginScreen(
                             )
                         }
                     }
+
+                    Spacer(modifier = Modifier.height(18.dp))
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Box(modifier = Modifier.weight(1f).height(1.dp).background(MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)))
+                        Text(
+                            text = "  OR USE OFFLINE  ",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            fontWeight = FontWeight.Bold
+                        )
+                        Box(modifier = Modifier.weight(1f).height(1.dp).background(MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)))
+                    }
+
+                    Spacer(modifier = Modifier.height(14.dp))
+
+                    OutlinedButton(
+                        onClick = {
+                            val finalName = fullName.trim().ifBlank { email.substringBefore("@").ifBlank { "Roommate" } }
+                            val finalHName = householdName.trim().ifBlank { "My Household" }
+                            val finalCode = householdCode.trim().ifBlank { "FLAT402" }
+                            onContinueOffline(finalName, finalHName, finalCode, upiId.trim())
+                        },
+                        modifier = Modifier.fillMaxWidth().height(48.dp),
+                        shape = RoundedCornerShape(14.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.PhoneAndroid,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.size(18.dp)
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(
+                            text = "Continue in Local / Offline Mode",
+                            fontWeight = FontWeight.SemiBold,
+                            color = MaterialTheme.colorScheme.primary
+                        )
+                    }
                 }
             }
 
@@ -799,6 +904,71 @@ fun LoginScreen(
                         enabled = !isSendingReset
                     ) {
                         Text(if (isResetSuccess) "Done" else "Cancel")
+                    }
+        }
+
+        // --- CLOUD CONFIGURATION DIALOG ---
+        if (showCloudConfigDialog) {
+            AlertDialog(
+                onDismissRequest = { showCloudConfigDialog = false },
+                title = {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Settings,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.primary
+                        )
+                        Text("Cloud Server Settings", fontWeight = FontWeight.Bold)
+                    }
+                },
+                text = {
+                    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                        Text(
+                            text = "Configure your Supabase project credentials for real-time cloud sync. If unreachable or empty, RoomieVault runs 100% locally.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+
+                        OutlinedTextField(
+                            value = configUrl,
+                            onValueChange = { configUrl = it },
+                            label = { Text("Supabase Project URL") },
+                            placeholder = { Text("https://xyzcompany.supabase.co") },
+                            modifier = Modifier.fillMaxWidth(),
+                            singleLine = true,
+                            shape = RoundedCornerShape(12.dp)
+                        )
+
+                        OutlinedTextField(
+                            value = configKey,
+                            onValueChange = { configKey = it },
+                            label = { Text("Supabase Anon Public Key") },
+                            placeholder = { Text("eyJhbGciOi...") },
+                            modifier = Modifier.fillMaxWidth(),
+                            singleLine = true,
+                            shape = RoundedCornerShape(12.dp)
+                        )
+                    }
+                },
+                confirmButton = {
+                    Button(
+                        onClick = {
+                            onUpdateSupabaseConfig?.invoke(configUrl.trim(), configKey.trim())
+                            showCloudConfigDialog = false
+                            errorMessage = null
+                            successMessage = "Cloud settings updated! Try signing in again or continue offline."
+                        },
+                        shape = RoundedCornerShape(12.dp)
+                    ) {
+                        Text("Save & Apply")
+                    }
+                },
+                dismissButton = {
+                    TextButton(onClick = { showCloudConfigDialog = false }) {
+                        Text("Cancel")
                     }
                 }
             )

@@ -744,6 +744,48 @@ class RoomieViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
+    /**
+     * Enter app immediately in Local / Offline Mode without requiring cloud connection.
+     * All SQLite/Room data, splits, chore rotations, receipts, and UPI QR codes remain 100% operational offline.
+     */
+    fun loginAsLocal(
+        name: String = "Roommate",
+        householdName: String = "My Household",
+        householdCode: String = "FLAT402",
+        upiId: String = ""
+    ) {
+        viewModelScope.launch {
+            val existingUser = repository.dao.getCurrentUserDirect()
+            if (existingUser != null) {
+                sessionPrefs.edit().putBoolean("is_logged_in", true).apply()
+                _isLoggedIn.value = true
+                _statusMessage.value = "Welcome back ${existingUser.name}! (Local Mode)"
+            } else {
+                val cleanName = name.trim().ifBlank { "Roommate" }
+                val cleanHName = householdName.trim().ifBlank { "My Household" }
+                val cleanCode = householdCode.trim().uppercase().ifBlank { "FLAT402" }
+                val cleanUpi = upiId.trim()
+
+                repository.clearSampleDataAndSetupOriginalHousehold(
+                    userName = cleanName,
+                    userEmail = "${cleanName.lowercase().replace(" ", "").ifBlank { "user" }}@local.device",
+                    userUpi = cleanUpi,
+                    householdName = cleanHName,
+                    householdCode = cleanCode
+                )
+                sessionPrefs.edit().putBoolean("is_logged_in", true).apply()
+                _isLoggedIn.value = true
+                _statusMessage.value = "Welcome $cleanName! Running in Local / Offline Mode."
+            }
+        }
+    }
+
+    fun updateSupabaseConfig(url: String, key: String) {
+        repository.syncManager.supabaseUrl = url.trim()
+        repository.syncManager.supabaseAnonKey = key.trim()
+        _statusMessage.value = "Cloud settings updated."
+    }
+
     // --- Supabase Cloud Data Store Sync ---
 
     fun syncAllWithSupabase() {

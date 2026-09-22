@@ -119,6 +119,14 @@ fun MainScaffold(
                 },
                 onForgotPassword = { email, cb ->
                     viewModel.resetSupabasePassword(email, cb)
+                },
+                onContinueOffline = { name, hName, code, upi ->
+                    viewModel.loginAsLocal(name, hName, code, upi)
+                },
+                currentSupabaseUrl = viewModel.repository.syncManager.supabaseUrl,
+                currentSupabaseKey = viewModel.repository.syncManager.supabaseAnonKey,
+                onUpdateSupabaseConfig = { url, key ->
+                    viewModel.updateSupabaseConfig(url, key)
                 }
             )
         } else {
