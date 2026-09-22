@@ -42,12 +42,50 @@ jobs:
       - name: Grant Execute Permission to Gradlew
         run: chmod +x gradlew
 
-      - name: Build Debug APK
-        run: ./gradlew assembleDebug --stacktrace --no-daemon
+      - name: Build Android APKs
+        run: ./gradlew assembleDebug assembleRelease --stacktrace --no-daemon
 
-      - name: Upload Debug APK Artifact
+      - name: Prepare APK Release Directory
+        run: |
+          mkdir -p release-apks
+          DEBUG_APK=$(find app/build/outputs/apk/debug -name "*.apk" | head -n 1)
+          RELEASE_APK=$(find app/build/outputs/apk/release -name "*.apk" | head -n 1)
+
+          if [ -n "$RELEASE_APK" ] && [ -f "$RELEASE_APK" ]; then
+            cp "$RELEASE_APK" release-apks/RoomieVault-v1.1.apk
+            cp "$RELEASE_APK" release-apks/app-release.apk
+          elif [ -n "$DEBUG_APK" ] && [ -f "$DEBUG_APK" ]; then
+            cp "$DEBUG_APK" release-apks/RoomieVault-v1.1.apk
+            cp "$DEBUG_APK" release-apks/app-release.apk
+          fi
+
+          if [ -n "$DEBUG_APK" ] && [ -f "$DEBUG_APK" ]; then
+            cp "$DEBUG_APK" release-apks/app-debug.apk
+          fi
+
+          ls -la release-apks/
+
+      - name: Upload APK Artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: RoomieVault-Debug-APK
-          path: app/build/outputs/apk/debug/*.apk
+          name: RoomieVault-v1.1-APK
+          path: release-apks/*.apk
           retention-days: 30
+
+      - name: Publish GitHub Release v1.1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release delete v1.1 --yes || true
+          git tag -d v1.1 || true
+          git push origin :refs/tags/v1.1 || true
+
+          gh release create v1.1 release-apks/* \
+            --title "RoomieVault v1.1 Release" \
+            --notes "### 🚀 RoomieVault v1.1 Release
+          - **Multi-User Role Permissions**: Debtor sees 'Pay UPI', Creditor sees 'Bell Reminder' and 'Verify & Settle'
+          - **Direct UPI Integration**: Pay roommates directly via Google Pay, PhonePe, Paytm, BHIM, or default UPI apps
+          - **Today's Chore Work Roster**: Today's work distribution with 'My Duties' vs 'Roommates' Duties' and 1-tap Bell nudges
+          - **Expense Transparency**: Tap any expense card to inspect per-head roommate share breakdowns
+          - **Cross-Device Push Alerts**: Instant notification center & Android heads-up alerts
+          - **GitHub In-App Auto-Update**: Seamless update checks and 1-tap download inside the app"
