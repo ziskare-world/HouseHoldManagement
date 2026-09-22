@@ -362,7 +362,7 @@ fun SupabaseAuthDialog(
         },
         dismissButton = {
             TextButton(onClick = onDismiss) {
-                Text("Dismiss (Offline Mode)")
+                Text("Dismiss")
             }
         }
     )

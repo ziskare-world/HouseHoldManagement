@@ -403,9 +403,9 @@ class SupabaseAuthManager(private val context: Context) {
         val msg = e.localizedMessage.orEmpty()
         return when {
             e is java.net.UnknownHostException || msg.contains("Unable to resolve host", ignoreCase = true) || msg.contains("No address associated", ignoreCase = true) ->
-                "Cloud server unreachable (no internet or cloud server paused). You can tap 'Continue in Local / Offline Mode' below to use RoomieVault offline, or update Cloud Settings."
+                "Cloud server unreachable. Please check your internet connection or verify the server status."
             e is java.net.SocketTimeoutException ->
-                "Cloud connection timed out. Check your internet connection or use Local / Offline Mode."
+                "Cloud connection timed out. Please check your internet connection and try again."
             msg.isNotBlank() -> msg
             else -> defaultMsg
         }

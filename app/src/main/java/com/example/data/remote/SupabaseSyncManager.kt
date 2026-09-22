@@ -15,23 +15,13 @@ class SupabaseSyncManager(private val context: Context) {
     val dataStore = SupabaseDataStore(context, authManager)
 
     var supabaseUrl: String
-        get() {
-            val url = prefs.getString("supabase_url", "https://aisacbhcjicddzhiropj.supabase.co")
-                ?: "https://aisacbhcjicddzhiropj.supabase.co"
-            return if (url.isBlank() || url.contains("gxpxbnrehrawxwgzdqqm")) {
-                "https://aisacbhcjicddzhiropj.supabase.co"
-            } else url
-        }
+        get() = prefs.getString("supabase_url", "https://gxpxbnrehrawxwgzdqqm.supabase.co")
+            ?: "https://gxpxbnrehrawxwgzdqqm.supabase.co"
         set(value) = prefs.edit().putString("supabase_url", value.trim()).apply()
 
     var supabaseAnonKey: String
-        get() {
-            val key = prefs.getString("supabase_anon_key", "sb_publishable_JrVgF8Ewk6FN7h27IUGd2Q_QJtvh47W")
-                ?: "sb_publishable_JrVgF8Ewk6FN7h27IUGd2Q_QJtvh47W"
-            return if (key.isBlank() || key.contains("pZIu3QSAgoZMWBjVkqCHFw")) {
-                "sb_publishable_JrVgF8Ewk6FN7h27IUGd2Q_QJtvh47W"
-            } else key
-        }
+        get() = prefs.getString("supabase_anon_key", "sb_publishable_pZIu3QSAgoZMWBjVkqCHFw_zOIRng-F")
+            ?: "sb_publishable_pZIu3QSAgoZMWBjVkqCHFw_zOIRng-F"
         set(value) = prefs.edit().putString("supabase_anon_key", value.trim()).apply()
 
     var isSyncEnabled: Boolean

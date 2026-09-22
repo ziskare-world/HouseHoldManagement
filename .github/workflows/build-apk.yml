@@ -77,7 +77,6 @@ jobs:
           gh release create v1.2 release-apks/*.apk \
             --title "RoomieVault v1.2 Release" \
             --notes "### 🚀 RoomieVault v1.2 Release
-          - **Offline First & Error Resolution**: Fixed 'Unable to resolve host' cloud server issue with graceful offline fallback
-          - **1-Click Local Mode**: Added 'Continue in Local / Offline Mode' button to use all features without needing a cloud account
-          - **Cloud Server Settings**: Direct configuration modal on login screen to customize Supabase project URL and keys
-          - **Full Feature Suite**: Split expenses, Sunday chore rotations, 1-tap UPI payments, and receipt viewer all operational locally"
+          - **Supabase Cloud Backend**: Connected to https://gxpxbnrehrawxwgzdqqm.supabase.co
+          - **Clean Authentication**: Focused Sign In & Sign Up flow with clean error messaging
+          - **Full Feature Suite**: Fair Splits, Sunday Chores, 1-Tap UPI payments, and receipt management"
