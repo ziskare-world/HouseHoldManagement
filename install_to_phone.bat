@@ -4,7 +4,7 @@ echo   RoomieVault v1.1 - Automatic Phone Installer via ADB
 echo =======================================================
 echo.
 set ADB="C:\Users\ayush\AppData\Local\Android\Sdk\platform-tools\adb.exe"
-set APK="d:\HouseHoldManagement\RoomieVault-v1.1.apk"
+set APK="d:\HouseHoldManagement\RoomieVault-v1.2.apk"
 
 echo Checking for connected Android devices...
 %ADB% devices
