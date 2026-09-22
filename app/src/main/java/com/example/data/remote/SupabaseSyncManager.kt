@@ -81,8 +81,7 @@ class SupabaseSyncManager(context: Context) {
                 dataStore.pushBudgetConfig(supabaseUrl, supabaseAnonKey, budget)
             }
 
-            // 8. Household Notifications & Alerts
-            val currentUserId = dao.getCurrentUserDirect()?.id ?: ""
+            // 8. Household Notifications & Alerts. Reuse the user ID fetched above.
             if (currentUserId.isNotBlank()) {
                 val notifs = dao.getNotificationsForUserDirect(householdId, currentUserId)
                 notifs.forEach { dataStore.pushNotification(supabaseUrl, supabaseAnonKey, it) }
