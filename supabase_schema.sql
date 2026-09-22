@@ -1,8 +1,8 @@
 -- =========================================================================
 -- ROOMIEVAULT PRODUCTION SUPABASE SCHEMA & POLICIES
--- Project: https://gxpxbnrehrawxwgzdqqm.supabase.co
+-- Project: https://aisacbhcjicddzhiropj.supabase.co
 -- Run this in your Supabase SQL Editor:
--- https://supabase.com/dashboard/project/gxpxbnrehrawxwgzdqqm/sql/new
+-- https://supabase.com/dashboard/project/aisacbhcjicddzhiropj/sql/new
 -- =========================================================================
 
 -- 1. Households Table

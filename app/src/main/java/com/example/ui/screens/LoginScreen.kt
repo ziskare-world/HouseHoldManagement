@@ -109,8 +109,8 @@ fun LoginScreen(
     ) -> Unit,
     onForgotPassword: ((email: String, onResult: (Boolean, String) -> Unit) -> Unit)? = null,
     onContinueOffline: (name: String, householdName: String, householdCode: String, upiId: String) -> Unit = { _, _, _, _ -> },
-    currentSupabaseUrl: String = "",
-    currentSupabaseKey: String = "",
+    currentSupabaseUrl: String = "https://aisacbhcjicddzhiropj.supabase.co",
+    currentSupabaseKey: String = "sb_publishable_JrVgF8Ewk6FN7h27IUGd2Q_QJtvh47W",
     onUpdateSupabaseConfig: ((String, String) -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
@@ -668,18 +668,6 @@ fun LoginScreen(
                 }
             }
 
-            Spacer(modifier = Modifier.height(28.dp))
-
-            // Quick Features Summary Badges
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceEvenly
-            ) {
-                FeatureChip(icon = Icons.Default.ReceiptLong, label = "Fair Splits")
-                FeatureChip(icon = Icons.Default.CleaningServices, label = "Sunday Chores")
-                FeatureChip(icon = Icons.Default.Payment, label = "1-Tap UPI")
-            }
-
             Spacer(modifier = Modifier.height(16.dp))
         }
 
@@ -905,6 +893,8 @@ fun LoginScreen(
                     ) {
                         Text(if (isResetSuccess) "Done" else "Cancel")
                     }
+                }
+            )
         }
 
         // --- CLOUD CONFIGURATION DIALOG ---
@@ -971,37 +961,6 @@ fun LoginScreen(
                         Text("Cancel")
                     }
                 }
-            )
-        }
-    }
-}
-
-@Composable
-private fun FeatureChip(
-    icon: ImageVector,
-    label: String
-) {
-    Surface(
-        shape = RoundedCornerShape(20.dp),
-        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f),
-        tonalElevation = 2.dp
-    ) {
-        Row(
-            modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Icon(
-                imageVector = icon,
-                contentDescription = null,
-                tint = MaterialTheme.colorScheme.primary,
-                modifier = Modifier.size(16.dp)
-            )
-            Spacer(modifier = Modifier.width(6.dp))
-            Text(
-                text = label,
-                style = MaterialTheme.typography.labelMedium,
-                fontWeight = FontWeight.SemiBold,
-                color = MaterialTheme.colorScheme.onSurface
             )
         }
     }
