@@ -51,6 +51,7 @@ jobs:
           DEBUG_APK=$(find app/build/outputs/apk/debug -name "*.apk" | head -n 1)
 
           if [ -n "$DEBUG_APK" ] && [ -f "$DEBUG_APK" ]; then
+            cp "$DEBUG_APK" release-apks/RoomieVault-v1.3.apk
             cp "$DEBUG_APK" release-apks/RoomieVault-v1.2.apk
             cp "$DEBUG_APK" release-apks/RoomieVault-v1.1.apk
             cp "$DEBUG_APK" release-apks/app-release.apk
@@ -62,21 +63,21 @@ jobs:
       - name: Upload APK Artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: RoomieVault-v1.2-APK
+          name: RoomieVault-v1.3-APK
           path: release-apks/*.apk
           retention-days: 30
 
-      - name: Publish GitHub Release v1.2
+      - name: Publish GitHub Release v1.3
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          gh release delete v1.2 --yes 2>/dev/null || true
-          git tag -d v1.2 2>/dev/null || true
-          git push origin :refs/tags/v1.2 2>/dev/null || true
+          gh release delete v1.3 --yes 2>/dev/null || true
+          git tag -d v1.3 2>/dev/null || true
+          git push origin :refs/tags/v1.3 2>/dev/null || true
 
-          gh release create v1.2 release-apks/*.apk \
-            --title "RoomieVault v1.2 Release" \
-            --notes "### 🚀 RoomieVault v1.2 Release
+          gh release create v1.3 release-apks/*.apk \
+            --title "RoomieVault v1.3 Release" \
+            --notes "### 🚀 RoomieVault v1.3 Release
           - **Supabase Cloud Backend**: Connected to https://gxpxbnrehrawxwgzdqqm.supabase.co
           - **Clean Authentication**: Focused Sign In & Sign Up flow with clean error messaging
           - **Full Feature Suite**: Fair Splits, Sunday Chores, 1-Tap UPI payments, and receipt management"
