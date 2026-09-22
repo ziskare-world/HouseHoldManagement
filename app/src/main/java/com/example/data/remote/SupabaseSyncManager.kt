@@ -4,17 +4,10 @@ import android.content.Context
 import android.content.SharedPreferences
 import android.util.Log
 import com.example.data.local.dao.RoomieDao
-import com.example.data.local.model.BudgetConfig
-import com.example.data.local.model.ChoreTask
-import com.example.data.local.model.ExpenseItem
-import com.example.data.local.model.Household
-import com.example.data.local.model.SavingsGoal
-import com.example.data.local.model.SettlementDebt
-import com.example.data.local.model.UserProfile
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
-class SupabaseSyncManager(context: Context) {
+class SupabaseSyncManager(private val context: Context) {
     private val prefs: SharedPreferences =
         context.getSharedPreferences("supabase_sync_prefs", Context.MODE_PRIVATE)
 
@@ -22,13 +15,17 @@ class SupabaseSyncManager(context: Context) {
     val dataStore = SupabaseDataStore(context, authManager)
 
     var supabaseUrl: String
-        get() = prefs.getString("supabase_url", "https://gxpxbnrehrawxwgzdqqm.supabase.co") ?: "https://gxpxbnrehrawxwgzdqqm.supabase.co"
+        get() = prefs.getString("supabase_url", "https://gxpxbnrehrawxwgzdqqm.supabase.co")
+            ?: "https://gxpxbnrehrawxwgzdqqm.supabase.co"
         set(value) = prefs.edit().putString("supabase_url", value.trim()).apply()
 
     var supabaseAnonKey: String
         get() {
-            val key = prefs.getString("supabase_anon_key", "sb_publishable_pZIu3QSAgoZMWBjVkqCHFw_zOIRng-F") ?: "sb_publishable_pZIu3QSAgoZMWBjVkqCHFw_zOIRng-F"
-            return if (key == "sb-anon-key-placeholder" || key.isBlank()) "sb_publishable_pZIu3QSAgoZMWBjVkqCHFw_zOIRng-F" else key
+            val key = prefs.getString("supabase_anon_key", "sb_publishable_pZIu3QSAgoZMWBjVkqCHFw_zOIRng-F")
+                ?: "sb_publishable_pZIu3QSAgoZMWBjVkqCHFw_zOIRng-F"
+            return if (key == "sb-anon-key-placeholder" || key.isBlank()) {
+                "sb_publishable_pZIu3QSAgoZMWBjVkqCHFw_zOIRng-F"
+            } else key
         }
         set(value) = prefs.edit().putString("supabase_anon_key", value.trim()).apply()
 
@@ -40,53 +37,24 @@ class SupabaseSyncManager(context: Context) {
         get() = prefs.getLong("last_sync_timestamp", 0L)
         set(value) = prefs.edit().putLong("last_sync_timestamp", value).apply()
 
-    /**
-     * Push all local Room Database entities to Supabase Cloud Data Store
-     */
     suspend fun pushAllToCloud(dao: RoomieDao, householdId: String): Boolean = withContext(Dispatchers.IO) {
-        if (!isSyncEnabled || supabaseUrl.isBlank() || supabaseAnonKey.isBlank()) {
-            return@withContext false
-        }
+        if (!isSyncEnabled || supabaseUrl.isBlank() || supabaseAnonKey.isBlank()) return@withContext false
         try {
-            // 1. Household
-            val household = dao.getHouseholdDirect(householdId)
-            if (household != null) {
-                dataStore.pushHousehold(supabaseUrl, supabaseAnonKey, household)
-            }
-
-            // 2. Roommates / User Profiles
-            val members = dao.getHouseholdMembersDirect(householdId)
-            members.forEach { dataStore.pushUserProfile(supabaseUrl, supabaseAnonKey, it) }
-
-            // 3. Expenses
-            val currentUserId = dao.getCurrentUserDirect()?.id ?: ""
-            val expenses = dao.getExpensesByMonthDirect(householdId, com.example.util.DateUtils.getCurrentMonthYearKey(), currentUserId)
-            expenses.forEach { dataStore.pushExpense(supabaseUrl, supabaseAnonKey, it) }
-
-            // 4. Chores
-            val chores = dao.getAllChoresDirect(householdId)
-            chores.forEach { dataStore.pushChore(supabaseUrl, supabaseAnonKey, it) }
-
-            // 5. Debts
-            val debts = dao.getSettlementDebtsDirect(householdId)
-            debts.forEach { dataStore.pushDebt(supabaseUrl, supabaseAnonKey, it) }
-
-            // 6. Savings Goals
-            val savings = dao.getSavingsGoalsDirect(householdId)
-            savings.forEach { dataStore.pushSavingsGoal(supabaseUrl, supabaseAnonKey, it) }
-
-            // 7. Budget Config
-            val budget = dao.getBudgetConfigDirect(com.example.util.DateUtils.getCurrentMonthYearKey(), householdId)
-            if (budget != null) {
-                dataStore.pushBudgetConfig(supabaseUrl, supabaseAnonKey, budget)
-            }
-
-            // 8. Household Notifications & Alerts. Reuse the user ID fetched above.
+            dao.getHouseholdDirect(householdId)?.let { dataStore.pushHousehold(supabaseUrl, supabaseAnonKey, it) }
+            dao.getHouseholdMembersDirect(householdId)
+                .forEach { dataStore.pushUserProfile(supabaseUrl, supabaseAnonKey, it) }
+            val currentUserId = dao.getCurrentUserDirect()?.id.orEmpty()
+            dao.getExpensesByMonthDirect(householdId, com.example.util.DateUtils.getCurrentMonthYearKey(), currentUserId)
+                .forEach { dataStore.pushExpense(supabaseUrl, supabaseAnonKey, it) }
+            dao.getAllChoresDirect(householdId).forEach { dataStore.pushChore(supabaseUrl, supabaseAnonKey, it) }
+            dao.getSettlementDebtsDirect(householdId).forEach { dataStore.pushDebt(supabaseUrl, supabaseAnonKey, it) }
+            dao.getSavingsGoalsDirect(householdId).forEach { dataStore.pushSavingsGoal(supabaseUrl, supabaseAnonKey, it) }
+            dao.getBudgetConfigDirect(com.example.util.DateUtils.getCurrentMonthYearKey(), householdId)
+                ?.let { dataStore.pushBudgetConfig(supabaseUrl, supabaseAnonKey, it) }
             if (currentUserId.isNotBlank()) {
-                val notifs = dao.getNotificationsForUserDirect(householdId, currentUserId)
-                notifs.forEach { dataStore.pushNotification(supabaseUrl, supabaseAnonKey, it) }
+                dao.getNotificationsForUserDirect(householdId, currentUserId)
+                    .forEach { dataStore.pushNotification(supabaseUrl, supabaseAnonKey, it) }
             }
-
             lastSyncTimestamp = System.currentTimeMillis()
             true
         } catch (e: Exception) {
@@ -95,42 +63,15 @@ class SupabaseSyncManager(context: Context) {
         }
     }
 
-    /**
-     * Pull remote records from Supabase Data Store into local Room DB
-     */
     suspend fun pullFromCloud(dao: RoomieDao, householdId: String): Result<Int> = withContext(Dispatchers.IO) {
         if (!isSyncEnabled || supabaseUrl.isBlank() || supabaseAnonKey.isBlank()) {
             return@withContext Result.failure(Exception("Supabase sync disabled or not configured"))
         }
-        val res = dataStore.pullAllDataFromSupabase(supabaseUrl, supabaseAnonKey, householdId, dao)
-        if (res.isSuccess) {
-            lastSyncTimestamp = System.currentTimeMillis()
-            // Check for unread alerts directed to the current user and display notification
-            try {
-                val currentUserId = dao.getCurrentUserDirect()?.id ?: ""
-                if (currentUserId.isNotBlank()) {
-                    val unread = dao.getNotificationsForUserDirect(householdId, currentUserId).filter { !it.isRead }
-                    if (unread.isNotEmpty()) {
-                        val latest = unread.first()
-                        com.example.notification.ChoreNotificationHelper.showNotificationAlert(
-                            context,
-                            latest.id.hashCode(),
-                            latest.title,
-                            latest.message
-                        )
-                    }
-                }
-            } catch (e: Exception) {
-                // Ignore alert display exception
-            }
+        dataStore.pullAllDataFromSupabase(supabaseUrl, supabaseAnonKey, householdId, dao).also {
+            if (it.isSuccess) lastSyncTimestamp = System.currentTimeMillis()
         }
-        res
     }
 
-    /**
-     * Ping Supabase connection
-     */
-    suspend fun testConnection(): Pair<Boolean, String> {
-        return dataStore.pingConnection(supabaseUrl, supabaseAnonKey)
-    }
+    suspend fun testConnection(): Pair<Boolean, String> =
+        dataStore.pingConnection(supabaseUrl, supabaseAnonKey)
 }
