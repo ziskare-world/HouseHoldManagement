@@ -79,13 +79,10 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          gh release delete v1.3 --yes 2>/dev/null || true
-          git tag -d v1.3 2>/dev/null || true
-          git push origin :refs/tags/v1.3 2>/dev/null || true
-
+          gh release upload v1.3 release-apks/*.apk --clobber 2>/dev/null || \
           gh release create v1.3 release-apks/*.apk \
             --title "RoomieVault v1.3 Release" \
             --notes "### 🚀 RoomieVault v1.3 Release
           - **Supabase Cloud Backend**: Connected to https://gxpxbnrehrawxwgzdqqm.supabase.co
           - **Clean Authentication**: Focused Sign In & Sign Up flow with clean error messaging
-          - **Full Feature Suite**: Fair Splits, Sunday Chores, 1-Tap UPI payments, and receipt management"
+          - **Full Feature Suite**: Fair Splits, Sunday Chores, 1-Tap UPI payments, and receipt management" || true
