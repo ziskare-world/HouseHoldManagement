@@ -744,6 +744,25 @@ class RoomieViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
+    fun resendConfirmationEmail(email: String, onResult: (Boolean, String) -> Unit) {
+        viewModelScope.launch {
+            val url = repository.syncManager.supabaseUrl
+            val anonKey = repository.syncManager.supabaseAnonKey
+            val result = repository.syncManager.authManager.resendConfirmationEmail(url, anonKey, email)
+            result.fold(
+                onSuccess = { msg ->
+                    _statusMessage.value = msg
+                    onResult(true, msg)
+                },
+                onFailure = { err ->
+                    val msg = err.localizedMessage ?: "Failed to resend confirmation email"
+                    _statusMessage.value = msg
+                    onResult(false, msg)
+                }
+            )
+        }
+    }
+
     /**
      * Enter app immediately in Local / Offline Mode without requiring cloud connection.
      * All SQLite/Room data, splits, chore rotations, receipts, and UPI QR codes remain 100% operational offline.

@@ -197,4 +197,23 @@ interface RoomieDao {
 
     @Query("DELETE FROM household_notifications")
     suspend fun clearAllNotifications()
+
+    // --- Offline Persistent Sync Queue ---
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertSyncQueueItem(item: com.example.data.local.model.SyncQueueItem)
+
+    @Query("SELECT * FROM sync_queue ORDER BY timestamp ASC")
+    suspend fun getAllPendingSyncItems(): List<com.example.data.local.model.SyncQueueItem>
+
+    @Query("DELETE FROM sync_queue WHERE id = :id")
+    suspend fun deleteSyncQueueItem(id: String)
+
+    @Query("SELECT COUNT(*) FROM sync_queue")
+    fun getPendingSyncCount(): Flow<Int>
+
+    @Query("SELECT COUNT(*) FROM sync_queue")
+    suspend fun getPendingSyncCountDirect(): Int
+
+    @Query("DELETE FROM sync_queue")
+    suspend fun clearSyncQueue()
 }

@@ -212,7 +212,7 @@ class SupabaseDataStore(
         upsertRecord(baseUrl, anonKey, "household_notifications", json.toString())
     }
 
-    private suspend fun upsertRecord(baseUrl: String, anonKey: String, table: String, jsonPayload: String): Boolean {
+    suspend fun upsertRecord(baseUrl: String, anonKey: String, table: String, jsonPayload: String): Boolean {
         if (baseUrl.isBlank() || anonKey.isBlank()) return false
         return try {
             val url = "${baseUrl.removeSuffix("/")}/rest/v1/$table"

@@ -104,6 +104,7 @@ fun LoginScreen(
         onResult: (Boolean, String) -> Unit
     ) -> Unit,
     onForgotPassword: ((email: String, onResult: (Boolean, String) -> Unit) -> Unit)? = null,
+    onResendConfirmation: ((email: String, onResult: (Boolean, String) -> Unit) -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
     var selectedTab by remember { mutableIntStateOf(0) } // 0 = Sign In, 1 = Sign Up
@@ -121,6 +122,12 @@ fun LoginScreen(
     var successMessage by remember { mutableStateOf<String?>(null) }
 
     var showForgotPasswordDialog by remember { mutableStateOf(false) }
+    var showResendConfirmationDialog by remember { mutableStateOf(false) }
+    var resendEmail by remember { mutableStateOf("") }
+    var isSendingResend by remember { mutableStateOf(false) }
+    var resendStatusMsg by remember { mutableStateOf<String?>(null) }
+    var isResendSuccess by remember { mutableStateOf(false) }
+    var isResendingConfirmation by remember { mutableStateOf(false) }
 
     val focusManager = LocalFocusManager.current
     val scrollState = rememberScrollState()
@@ -266,12 +273,70 @@ fun LoginScreen(
                                 .fillMaxWidth()
                                 .padding(bottom = 12.dp)
                         ) {
-                            Text(
-                                text = errorMessage ?: "",
-                                color = MaterialTheme.colorScheme.onErrorContainer,
-                                style = MaterialTheme.typography.bodySmall,
-                                modifier = Modifier.padding(12.dp)
-                            )
+                            Column(modifier = Modifier.padding(12.dp)) {
+                                Text(
+                                    text = errorMessage ?: "",
+                                    color = MaterialTheme.colorScheme.onErrorContainer,
+                                    style = MaterialTheme.typography.bodySmall
+                                )
+
+                                val isEmailNotConfirmed = errorMessage?.let { msg ->
+                                    msg.contains("confirm", ignoreCase = true) ||
+                                    msg.contains("verification", ignoreCase = true) ||
+                                    msg.contains("not confirmed", ignoreCase = true) ||
+                                    msg.contains("email_not_confirmed", ignoreCase = true)
+                                } == true
+
+                                if (isEmailNotConfirmed && onResendConfirmation != null) {
+                                    Spacer(modifier = Modifier.height(10.dp))
+                                    Button(
+                                        onClick = {
+                                            if (email.isBlank()) {
+                                                errorMessage = "Please enter your email address above to resend confirmation."
+                                                return@Button
+                                            }
+                                            isResendingConfirmation = true
+                                            onResendConfirmation(email.trim()) { success, resMsg ->
+                                                isResendingConfirmation = false
+                                                if (success) {
+                                                    successMessage = resMsg
+                                                    errorMessage = null
+                                                } else {
+                                                    errorMessage = resMsg
+                                                }
+                                            }
+                                        },
+                                        enabled = !isResendingConfirmation,
+                                        colors = ButtonDefaults.buttonColors(
+                                            containerColor = MaterialTheme.colorScheme.primary
+                                        ),
+                                        shape = RoundedCornerShape(10.dp),
+                                        modifier = Modifier.fillMaxWidth()
+                                    ) {
+                                        if (isResendingConfirmation) {
+                                            CircularProgressIndicator(
+                                                modifier = Modifier.size(16.dp),
+                                                strokeWidth = 2.dp,
+                                                color = Color.White
+                                            )
+                                            Spacer(modifier = Modifier.width(8.dp))
+                                            Text("Sending Link...", fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                                        } else {
+                                            Icon(
+                                                imageVector = Icons.Default.Email,
+                                                contentDescription = null,
+                                                modifier = Modifier.size(16.dp)
+                                            )
+                                            Spacer(modifier = Modifier.width(8.dp))
+                                            Text(
+                                                text = "Resend Confirmation Email",
+                                                fontWeight = FontWeight.Bold,
+                                                fontSize = 13.sp
+                                            )
+                                        }
+                                    }
+                                }
+                            }
                         }
                     }
 
@@ -345,12 +410,13 @@ fun LoginScreen(
                             singleLine = true
                         )
 
-                        // Forgot Password Link
+                        // Forgot Password & Resend Confirmation Links
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .padding(top = 4.dp),
-                            horizontalArrangement = Arrangement.End
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
                         ) {
                             TextButton(
                                 onClick = { showForgotPasswordDialog = true },
@@ -362,6 +428,25 @@ fun LoginScreen(
                                     color = MaterialTheme.colorScheme.primary,
                                     fontWeight = FontWeight.SemiBold
                                 )
+                            }
+
+                            if (onResendConfirmation != null) {
+                                TextButton(
+                                    onClick = {
+                                        resendEmail = email
+                                        resendStatusMsg = null
+                                        isResendSuccess = false
+                                        showResendConfirmationDialog = true
+                                    },
+                                    contentPadding = androidx.compose.foundation.layout.PaddingValues(0.dp)
+                                ) {
+                                    Text(
+                                        text = "Resend Confirmation?",
+                                        style = MaterialTheme.typography.labelMedium,
+                                        color = MaterialTheme.colorScheme.primary,
+                                        fontWeight = FontWeight.SemiBold
+                                    )
+                                }
                             }
                         }
 
@@ -787,6 +872,108 @@ fun LoginScreen(
                         enabled = !isSendingReset
                     ) {
                         Text(if (isResetSuccess) "Done" else "Cancel")
+                    }
+                }
+            )
+        }
+
+        // --- RESEND CONFIRMATION EMAIL DIALOG ---
+        if (showResendConfirmationDialog && onResendConfirmation != null) {
+            AlertDialog(
+                onDismissRequest = {
+                    if (!isSendingResend) showResendConfirmationDialog = false
+                },
+                title = {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Email,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.primary
+                        )
+                        Text("Resend Confirmation", fontWeight = FontWeight.Bold)
+                    }
+                },
+                text = {
+                    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                        Text(
+                            text = "Enter your registered email address to receive a fresh verification link.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+
+                        OutlinedTextField(
+                            value = resendEmail,
+                            onValueChange = { resendEmail = it },
+                            label = { Text("Email Address") },
+                            placeholder = { Text("your@email.com") },
+                            leadingIcon = {
+                                Icon(Icons.Default.Email, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
+                            },
+                            modifier = Modifier.fillMaxWidth(),
+                            singleLine = true,
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Email),
+                            shape = RoundedCornerShape(12.dp)
+                        )
+
+                        if (resendStatusMsg != null) {
+                            Surface(
+                                shape = RoundedCornerShape(8.dp),
+                                color = if (isResendSuccess) MintSuccess.copy(alpha = 0.15f) else MaterialTheme.colorScheme.errorContainer,
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Text(
+                                    text = resendStatusMsg ?: "",
+                                    color = if (isResendSuccess) Color(0xFF0F5132) else MaterialTheme.colorScheme.onErrorContainer,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    fontWeight = if (isResendSuccess) FontWeight.SemiBold else FontWeight.Normal,
+                                    modifier = Modifier.padding(10.dp)
+                                )
+                            }
+                        }
+                    }
+                },
+                confirmButton = {
+                    Button(
+                        onClick = {
+                            if (resendEmail.isBlank()) {
+                                resendStatusMsg = "Please enter your email."
+                                isResendSuccess = false
+                                return@Button
+                            }
+                            isSendingResend = true
+                            resendStatusMsg = null
+                            onResendConfirmation.invoke(resendEmail.trim()) { success, msg ->
+                                isSendingResend = false
+                                isResendSuccess = success
+                                resendStatusMsg = msg
+                                if (success) {
+                                    successMessage = "Confirmation email sent to ${resendEmail.trim()}!"
+                                }
+                            }
+                        },
+                        enabled = !isSendingResend,
+                        shape = RoundedCornerShape(12.dp)
+                    ) {
+                        if (isSendingResend) {
+                            CircularProgressIndicator(
+                                modifier = Modifier.size(16.dp),
+                                color = MaterialTheme.colorScheme.onPrimary,
+                                strokeWidth = 2.dp
+                            )
+                            Spacer(modifier = Modifier.width(8.dp))
+                        }
+                        Text(if (isResendSuccess) "Sent!" else "Resend Email")
+                    }
+                },
+                dismissButton = {
+                    TextButton(
+                        onClick = { showResendConfirmationDialog = false },
+                        enabled = !isSendingResend
+                    ) {
+                        Text(if (isResendSuccess) "Done" else "Cancel")
                     }
                 }
             )

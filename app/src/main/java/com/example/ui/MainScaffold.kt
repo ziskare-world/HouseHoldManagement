@@ -119,6 +119,9 @@ fun MainScaffold(
                 },
                 onForgotPassword = { email, cb ->
                     viewModel.resetSupabasePassword(email, cb)
+                },
+                onResendConfirmation = { email, cb ->
+                    viewModel.resendConfirmationEmail(email, cb)
                 }
             )
         } else {

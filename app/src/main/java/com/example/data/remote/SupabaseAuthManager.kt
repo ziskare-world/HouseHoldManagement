@@ -321,6 +321,44 @@ class SupabaseAuthManager(private val context: Context) {
     }
 
     /**
+     * Resend signup verification / confirmation email via Supabase Auth API
+     */
+    suspend fun resendConfirmationEmail(
+        baseUrl: String,
+        anonKey: String,
+        email: String
+    ): Result<String> = withContext(Dispatchers.IO) {
+        try {
+            val endpoint = "${baseUrl.removeSuffix("/")}/auth/v1/resend"
+            val requestBodyJson = JSONObject().apply {
+                put("type", "signup")
+                put("email", email.trim())
+            }
+
+            val body = requestBodyJson.toString().toRequestBody("application/json; charset=utf-8".toMediaType())
+            val request = Request.Builder()
+                .url(endpoint)
+                .addHeader("apikey", anonKey)
+                .addHeader("Authorization", "Bearer $anonKey")
+                .addHeader("Content-Type", "application/json")
+                .post(body)
+                .build()
+
+            client.newCall(request).execute().use { response ->
+                if (response.isSuccessful || response.code in 200..299) {
+                    Result.success("Confirmation email resent to ${email.trim()}. Please check your inbox and spam folder.")
+                } else {
+                    val res = response.body?.string() ?: ""
+                    val msg = parseErrorMessage(res, "Failed to resend confirmation email")
+                    Result.failure(Exception(msg))
+                }
+            }
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+
+    /**
      * Sign out user and clear session
      */
     suspend fun signOut(

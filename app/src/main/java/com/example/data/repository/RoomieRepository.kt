@@ -10,13 +10,17 @@ import com.example.data.local.model.Household
 import com.example.data.local.model.HouseholdNotification
 import com.example.data.local.model.SavingsGoal
 import com.example.data.local.model.SettlementDebt
+import com.example.data.local.model.SyncQueueItem
 import com.example.data.local.model.UserProfile
+import com.example.data.local.model.toJson
 import com.example.data.remote.SupabaseSyncManager
 import com.example.data.remote.SupabaseUser
+import com.example.data.remote.SyncStatus
 import com.example.util.DateUtils
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
 import java.util.UUID
 
@@ -36,6 +40,9 @@ class RoomieRepository(
                 val sync = SupabaseSyncManager(context)
                 val repo = RoomieRepository(db.roomieDao(), sync)
                 INSTANCE = repo
+                sync.startAutoSyncWatcher(repo.dao) {
+                    INSTANCE?.dao?.getCurrentUserDirect()?.householdId
+                }
                 repo
             }
         }
@@ -74,57 +81,41 @@ class RoomieRepository(
     fun getUnreadNotificationsCount(householdId: String, userId: String): Flow<Int> =
         dao.getUnreadNotificationsCount(householdId, userId)
 
-    // --- Clean Slate: Purge Legacy Sample Mock Data ---
-    suspend fun purgeSampleMockDataIfPresent() {
-        val expenses = dao.getAllExpensesDirect()
-        val hasMockExpenses = expenses.any {
-            it.title.contains("Groceries & Supermarket") ||
-            it.title.contains("Fiber WiFi") ||
-            it.title.contains("Cleaning Supplies") ||
-            it.title.contains("Biryani") ||
-            it.notes.contains("DMart")
-        }
-        val mockUser = dao.getCurrentUserDirect()
-        val mockHouseholdId = mockUser?.householdId ?: ""
-        val chores = dao.getAllChoresDirect(mockHouseholdId)
-        val hasMockChores = chores.any {
-            it.title.contains("Sunday Deep Cleaning") ||
-            it.title.contains("Kitchen Dishwashing") ||
-            it.title.contains("Trash Disposal") ||
-            it.assignedToUserName.contains("Rahul") ||
-            it.assignedToUserName.contains("Alex") ||
-            it.assignedToUserName.contains("Priya") ||
-            it.assignedToUserName.contains("Vikram")
-        }
+    val pendingSyncCount: Flow<Int> = dao.getPendingSyncCount()
+    val syncStatus: StateFlow<SyncStatus> = syncManager.syncStatus
+    val lastSyncMessage: StateFlow<String> = syncManager.lastSyncMessage
 
-        if (hasMockExpenses || hasMockChores || mockUser?.id == "USR_ALEX" || mockUser?.householdId == "HOUSE_FLAT_402") {
-            dao.clearAllExpenses()
-            dao.clearAllChores()
-            dao.clearAllDebts()
-            dao.clearAllSavingsGoals()
-            dao.clearAllNotifications()
-        }
-        if (mockUser?.id == "USR_ALEX" || mockUser?.householdId == "HOUSE_FLAT_402") {
-            dao.clearAllUsers()
-            dao.clearAllHouseholds()
+    /**
+     * Persist mutation to SQLite sync queue and push immediately if online.
+     */
+    suspend fun recordAndPush(
+        entityType: String,
+        entityId: String,
+        action: String = "UPSERT",
+        payloadJson: String = ""
+    ) {
+        dao.insertSyncQueueItem(
+            SyncQueueItem(
+                entityType = entityType,
+                entityId = entityId,
+                action = action,
+                payloadJson = payloadJson
+            )
+        )
+        if (syncManager.isOnline()) {
+            backgroundScope.launch {
+                syncManager.processPendingQueue(dao)
+            }
         }
     }
 
-    suspend fun clearAllChores() {
-        dao.clearAllChores()
-    }
-
-    suspend fun getCurrentUserDirect(): UserProfile? = dao.getCurrentUserDirect()
-
-    suspend fun regenerateInviteCode(householdId: String): String {
+    suspend fun regenerateHouseholdInviteCode(householdId: String): String {
         val newCode = "RV" + UUID.randomUUID().toString().replace("-", "").take(4).uppercase()
         val household = dao.getHouseholdDirect(householdId)
         if (household != null) {
             val updated = household.copy(inviteCode = newCode)
             dao.insertHousehold(updated)
-            backgroundScope.launch {
-                syncManager.dataStore.pushHousehold(syncManager.supabaseUrl, syncManager.supabaseAnonKey, updated)
-            }
+            recordAndPush("HOUSEHOLD", updated.id, "UPSERT", updated.toJson())
         }
         return newCode
     }
@@ -143,9 +134,7 @@ class RoomieRepository(
             budgetWarningThreshold = warningThreshold
         )
         dao.insertHousehold(updated)
-        backgroundScope.launch {
-            syncManager.dataStore.pushHousehold(syncManager.supabaseUrl, syncManager.supabaseAnonKey, updated)
-        }
+        recordAndPush("HOUSEHOLD", updated.id, "UPSERT", updated.toJson())
 
         val monthKey = DateUtils.getCurrentMonthYearKey()
         val existingBudget = dao.getBudgetConfigDirect(monthKey, householdId)
@@ -154,12 +143,10 @@ class RoomieRepository(
             alertThresholdPercent = warningThreshold
         )
         dao.insertBudgetConfig(newBudget)
-        backgroundScope.launch {
-            syncManager.dataStore.pushBudgetConfig(syncManager.supabaseUrl, syncManager.supabaseAnonKey, newBudget)
-        }
+        recordAndPush("BUDGET_CONFIG", "${newBudget.monthYearKey}_${newBudget.householdId}", "UPSERT", newBudget.toJson())
     }
 
-    // --- Action Methods with Automatic Cloud Sync ---
+    // --- Action Methods with Offline-First Persistence + Background Sync ---
 
     suspend fun addExpense(
         title: String,
@@ -190,13 +177,9 @@ class RoomieRepository(
             notes = notes
         )
         dao.insertExpense(expense)
+        recordAndPush("EXPENSE", expense.id, "UPSERT", expense.toJson())
 
-        // Asynchronously push to Supabase
-        backgroundScope.launch {
-            syncManager.dataStore.pushExpense(syncManager.supabaseUrl, syncManager.supabaseAnonKey, expense)
-        }
-
-        // Automatically create settlement debts for all participating split members (excluding payer)
+        // Automatically create settlement debts for participating roommates
         if (splitType != "PERSONAL" && members.isNotEmpty()) {
             val totalInvolved = if (members.any { it.id == paidBy.id }) members.size else (members.size + 1)
             val perHeadAmount = amount / totalInvolved
@@ -214,9 +197,7 @@ class RoomieRepository(
                     householdId = householdId
                 )
                 dao.insertDebt(debt)
-                backgroundScope.launch {
-                    syncManager.dataStore.pushDebt(syncManager.supabaseUrl, syncManager.supabaseAnonKey, debt)
-                }
+                recordAndPush("DEBT", debt.id, "UPSERT", debt.toJson())
             }
         }
     }
@@ -229,16 +210,12 @@ class RoomieRepository(
             monthYearKey = DateUtils.getMonthYearKey(expense.dateMillis)
         )
         dao.updateExpense(updatedExpense)
-        backgroundScope.launch {
-            syncManager.dataStore.pushExpense(syncManager.supabaseUrl, syncManager.supabaseAnonKey, updatedExpense)
-        }
+        recordAndPush("EXPENSE", updatedExpense.id, "UPSERT", updatedExpense.toJson())
     }
 
     suspend fun deleteExpense(expenseId: String) {
         dao.deleteExpense(expenseId)
-        backgroundScope.launch {
-            syncManager.dataStore.deleteRecord(syncManager.supabaseUrl, syncManager.supabaseAnonKey, "expenses", expenseId)
-        }
+        recordAndPush("EXPENSE", expenseId, "DELETE")
     }
 
     suspend fun addChore(
@@ -272,27 +249,21 @@ class RoomieRepository(
             points = points
         )
         dao.insertChore(chore)
-        backgroundScope.launch {
-            syncManager.dataStore.pushChore(syncManager.supabaseUrl, syncManager.supabaseAnonKey, chore)
-        }
+        recordAndPush("CHORE", chore.id, "UPSERT", chore.toJson())
     }
 
     suspend fun updateChore(chore: ChoreTask) {
         dao.updateChore(chore)
-        backgroundScope.launch {
-            syncManager.dataStore.pushChore(syncManager.supabaseUrl, syncManager.supabaseAnonKey, chore)
-        }
+        recordAndPush("CHORE", chore.id, "UPSERT", chore.toJson())
     }
 
     suspend fun updateChoreStatus(choreId: String, status: String) {
         val today = DateUtils.formatDisplayDate(System.currentTimeMillis())
         dao.updateChoreStatus(choreId, status, today)
-        backgroundScope.launch {
-            val hid = dao.getCurrentUserDirect()?.householdId ?: "HOUSE_FLAT_402"
-            val chores = dao.getAllChoresDirect(hid)
-            chores.find { it.id == choreId }?.let {
-                syncManager.dataStore.pushChore(syncManager.supabaseUrl, syncManager.supabaseAnonKey, it)
-            }
+        val hid = dao.getCurrentUserDirect()?.householdId ?: ""
+        val chores = dao.getAllChoresDirect(hid)
+        chores.find { it.id == choreId }?.let {
+            recordAndPush("CHORE", it.id, "UPSERT", it.toJson())
         }
     }
 
@@ -311,16 +282,12 @@ class RoomieRepository(
             assignedToUserId = nextUser.id,
             assignedToUserName = nextUser.name
         )
-        backgroundScope.launch {
-            syncManager.dataStore.pushChore(syncManager.supabaseUrl, syncManager.supabaseAnonKey, updatedChore)
-        }
+        recordAndPush("CHORE", updatedChore.id, "UPSERT", updatedChore.toJson())
     }
 
     suspend fun deleteChore(choreId: String) {
         dao.deleteChore(choreId)
-        backgroundScope.launch {
-            syncManager.dataStore.deleteRecord(syncManager.supabaseUrl, syncManager.supabaseAnonKey, "chore_tasks", choreId)
-        }
+        recordAndPush("CHORE", choreId, "DELETE")
     }
 
     suspend fun addDebt(
@@ -343,28 +310,22 @@ class RoomieRepository(
             householdId = householdId
         )
         dao.insertDebt(debt)
-        backgroundScope.launch {
-            syncManager.dataStore.pushDebt(syncManager.supabaseUrl, syncManager.supabaseAnonKey, debt)
-        }
+        recordAndPush("DEBT", debt.id, "UPSERT", debt.toJson())
     }
 
     suspend fun updateDebtStatus(debtId: String, status: String, txRef: String = "") {
         val settledTime = if (status == "VERIFIED") System.currentTimeMillis() else 0L
         dao.updateDebtStatus(debtId, status, settledTime, txRef)
-        backgroundScope.launch {
-            val hid = dao.getCurrentUserDirect()?.householdId ?: "HOUSE_FLAT_402"
-            val debts = dao.getSettlementDebtsDirect(hid)
-            debts.find { it.id == debtId }?.let {
-                syncManager.dataStore.pushDebt(syncManager.supabaseUrl, syncManager.supabaseAnonKey, it)
-            }
+        val hid = dao.getCurrentUserDirect()?.householdId ?: ""
+        val debts = dao.getSettlementDebtsDirect(hid)
+        debts.find { it.id == debtId }?.let {
+            recordAndPush("DEBT", it.id, "UPSERT", it.toJson())
         }
     }
 
     suspend fun deleteDebt(debtId: String) {
         dao.deleteDebt(debtId)
-        backgroundScope.launch {
-            syncManager.dataStore.deleteRecord(syncManager.supabaseUrl, syncManager.supabaseAnonKey, "settlement_debts", debtId)
-        }
+        recordAndPush("DEBT", debtId, "DELETE")
     }
 
     suspend fun addSavingsGoal(
@@ -385,34 +346,27 @@ class RoomieRepository(
             colorHex = colorHex
         )
         dao.insertSavingsGoal(goal)
-        backgroundScope.launch {
-            syncManager.dataStore.pushSavingsGoal(syncManager.supabaseUrl, syncManager.supabaseAnonKey, goal)
-        }
+        recordAndPush("SAVINGS_GOAL", goal.id, "UPSERT", goal.toJson())
     }
 
     suspend fun updateSavingsAmount(goalId: String, newAmount: Double) {
         dao.updateSavingsProgress(goalId, newAmount, System.currentTimeMillis())
-        backgroundScope.launch {
-            val hid = dao.getCurrentUserDirect()?.householdId ?: "HOUSE_FLAT_402"
-            val goals = dao.getSavingsGoalsDirect(hid)
-            goals.find { it.id == goalId }?.let {
-                syncManager.dataStore.pushSavingsGoal(syncManager.supabaseUrl, syncManager.supabaseAnonKey, it.copy(currentAmount = newAmount))
-            }
+        val hid = dao.getCurrentUserDirect()?.householdId ?: ""
+        val goals = dao.getSavingsGoalsDirect(hid)
+        goals.find { it.id == goalId }?.let {
+            val updated = it.copy(currentAmount = newAmount)
+            recordAndPush("SAVINGS_GOAL", updated.id, "UPSERT", updated.toJson())
         }
     }
 
     suspend fun deleteSavingsGoal(goalId: String) {
         dao.deleteSavingsGoal(goalId)
-        backgroundScope.launch {
-            syncManager.dataStore.deleteRecord(syncManager.supabaseUrl, syncManager.supabaseAnonKey, "savings_goals", goalId)
-        }
+        recordAndPush("SAVINGS_GOAL", goalId, "DELETE")
     }
 
     suspend fun updateBudgetConfig(config: BudgetConfig) {
         dao.insertBudgetConfig(config)
-        backgroundScope.launch {
-            syncManager.dataStore.pushBudgetConfig(syncManager.supabaseUrl, syncManager.supabaseAnonKey, config)
-        }
+        recordAndPush("BUDGET_CONFIG", "${config.monthYearKey}_${config.householdId}", "UPSERT", config.toJson())
     }
 
     suspend fun addRoommate(
@@ -433,30 +387,22 @@ class RoomieRepository(
             isVirtual = true
         )
         dao.insertUser(user)
-        backgroundScope.launch {
-            syncManager.dataStore.pushUserProfile(syncManager.supabaseUrl, syncManager.supabaseAnonKey, user)
-        }
+        recordAndPush("USER_PROFILE", user.id, "UPSERT", user.toJson())
     }
 
     suspend fun updateRoommate(user: UserProfile) {
         dao.insertUser(user)
-        backgroundScope.launch {
-            syncManager.dataStore.pushUserProfile(syncManager.supabaseUrl, syncManager.supabaseAnonKey, user)
-        }
+        recordAndPush("USER_PROFILE", user.id, "UPSERT", user.toJson())
     }
 
     suspend fun deleteRoommate(userId: String) {
         dao.deleteUser(userId)
-        backgroundScope.launch {
-            syncManager.dataStore.deleteRecord(syncManager.supabaseUrl, syncManager.supabaseAnonKey, "user_profiles", userId)
-        }
+        recordAndPush("USER_PROFILE", userId, "DELETE")
     }
 
     suspend fun updateUserProfile(user: UserProfile) {
         dao.insertUser(user)
-        backgroundScope.launch {
-            syncManager.dataStore.pushUserProfile(syncManager.supabaseUrl, syncManager.supabaseAnonKey, user)
-        }
+        recordAndPush("USER_PROFILE", user.id, "UPSERT", user.toJson())
     }
 
     suspend fun createAndDispatchNotification(
@@ -484,9 +430,7 @@ class RoomieRepository(
             createdAt = System.currentTimeMillis()
         )
         dao.insertNotification(notif)
-        backgroundScope.launch {
-            syncManager.dataStore.pushNotification(syncManager.supabaseUrl, syncManager.supabaseAnonKey, notif)
-        }
+        recordAndPush("NOTIFICATION", notif.id, "UPSERT", notif.toJson())
     }
 
     suspend fun markNotificationAsRead(notificationId: String) {
@@ -511,10 +455,8 @@ class RoomieRepository(
             householdName = household.name
         )
         dao.insertUser(updatedUser)
-        backgroundScope.launch {
-            syncManager.dataStore.pushHousehold(syncManager.supabaseUrl, syncManager.supabaseAnonKey, household)
-            syncManager.dataStore.pushUserProfile(syncManager.supabaseUrl, syncManager.supabaseAnonKey, updatedUser)
-        }
+        recordAndPush("HOUSEHOLD", household.id, "UPSERT", household.toJson())
+        recordAndPush("USER_PROFILE", updatedUser.id, "UPSERT", updatedUser.toJson())
     }
 
     // --- Supabase Authentication & Synchronization Bridges ---
@@ -542,70 +484,11 @@ class RoomieRepository(
         )
         dao.insertHousehold(household)
 
-        // Pull household cloud data immediately
-        syncManager.pullFromCloud(dao, supabaseUser.householdId)
+        // Perform full two-way sync on login
+        syncManager.performFullSync(dao, supabaseUser.householdId)
     }
 
     suspend fun syncAllWithSupabase(householdId: String): Boolean {
-        val pushOk = syncManager.pushAllToCloud(dao, householdId)
-        val pullRes = syncManager.pullFromCloud(dao, householdId)
-        return pushOk || pullRes.isSuccess
-    }
-
-    suspend fun clearSampleDataAndSetupOriginalHousehold(
-        userName: String,
-        userEmail: String,
-        userUpi: String,
-        householdName: String,
-        householdCode: String,
-        monthlyBudget: Double = 30000.0
-    ) {
-        dao.clearAllExpenses()
-        dao.clearAllChores()
-        dao.clearAllDebts()
-        dao.clearAllSavingsGoals()
-        dao.clearAllNotifications()
-        dao.clearAllUsers()
-        dao.clearAllHouseholds()
-
-        val cleanCode = householdCode.trim().uppercase().ifBlank { "HOME101" }
-        val householdId = "HOUSE_$cleanCode"
-        val userId = "USR_" + UUID.randomUUID().toString().take(8).uppercase()
-
-        val household = Household(
-            id = householdId,
-            name = householdName.ifBlank { "My Household" },
-            inviteCode = cleanCode,
-            createdByUserId = userId,
-            monthlyBudgetLimit = monthlyBudget,
-            budgetWarningThreshold = 80
-        )
-        dao.insertHousehold(household)
-
-        val currentUser = UserProfile(
-            id = userId,
-            name = userName.ifBlank { "User" },
-            email = userEmail.ifBlank { "user@example.com" },
-            upiId = userUpi.ifBlank { "user@upi" },
-            householdId = householdId,
-            householdName = household.name,
-            avatarColorHex = "#0F5132",
-            isCurrentUser = true,
-            isVirtual = false
-        )
-        dao.insertUser(currentUser)
-
-        val monthKey = DateUtils.getCurrentMonthYearKey()
-        val budget = BudgetConfig(
-            monthYearKey = monthKey,
-            householdId = householdId,
-            totalBudgetLimit = monthlyBudget,
-            alertThresholdPercent = 80
-        )
-        dao.insertBudgetConfig(budget)
-
-        backgroundScope.launch {
-            syncManager.pushAllToCloud(dao, householdId)
-        }
+        return syncManager.performFullSync(dao, householdId)
     }
 }
