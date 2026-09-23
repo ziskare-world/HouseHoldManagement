@@ -491,4 +491,64 @@ class RoomieRepository(
     suspend fun syncAllWithSupabase(householdId: String): Boolean {
         return syncManager.performFullSync(dao, householdId)
     }
+
+    suspend fun clearSampleDataAndSetupOriginalHousehold(
+        userName: String,
+        userEmail: String,
+        userUpi: String,
+        householdName: String,
+        householdCode: String,
+        monthlyBudget: Double = 30000.0
+    ) {
+        dao.clearAllExpenses()
+        dao.clearAllChores()
+        dao.clearAllDebts()
+        dao.clearAllSavingsGoals()
+        dao.clearAllNotifications()
+        dao.clearAllUsers()
+        dao.clearAllHouseholds()
+
+        val cleanCode = householdCode.trim().uppercase().ifBlank { "HOME101" }
+        val householdId = "HOUSE_$cleanCode"
+        val userId = "USR_" + UUID.randomUUID().toString().take(8).uppercase()
+
+        val household = Household(
+            id = householdId,
+            name = householdName.ifBlank { "My Household" },
+            inviteCode = cleanCode,
+            createdByUserId = userId,
+            monthlyBudgetLimit = monthlyBudget,
+            budgetWarningThreshold = 80
+        )
+        dao.insertHousehold(household)
+        recordAndPush("HOUSEHOLD", household.id, "UPSERT", household.toJson())
+
+        val currentUser = UserProfile(
+            id = userId,
+            name = userName.ifBlank { "User" },
+            email = userEmail.ifBlank { "user@example.com" },
+            upiId = userUpi.ifBlank { "user@upi" },
+            householdId = householdId,
+            householdName = household.name,
+            avatarColorHex = "#0F5132",
+            isCurrentUser = true,
+            isVirtual = false
+        )
+        dao.insertUser(currentUser)
+        recordAndPush("USER_PROFILE", currentUser.id, "UPSERT", currentUser.toJson())
+
+        val monthKey = DateUtils.getCurrentMonthYearKey()
+        val budget = BudgetConfig(
+            monthYearKey = monthKey,
+            householdId = householdId,
+            totalBudgetLimit = monthlyBudget,
+            alertThresholdPercent = 80
+        )
+        dao.insertBudgetConfig(budget)
+        recordAndPush("BUDGET_CONFIG", "${budget.monthYearKey}_${budget.householdId}", "UPSERT", budget.toJson())
+    }
+
+    suspend fun purgeSampleMockDataIfPresent() {
+        // Safe no-op hook for clean data start
+    }
 }

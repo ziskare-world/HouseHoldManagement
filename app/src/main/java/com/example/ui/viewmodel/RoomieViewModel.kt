@@ -229,7 +229,7 @@ class RoomieViewModel(application: Application) : AndroidViewModel(application) 
     fun regenerateHouseholdCode() {
         viewModelScope.launch {
             val hid = currentHousehold.value?.id ?: currentUser.value?.householdId ?: return@launch
-            val newCode = repository.regenerateInviteCode(hid)
+            val newCode = repository.regenerateHouseholdInviteCode(hid)
             _statusMessage.value = "New Invite Code generated: $newCode"
         }
     }
@@ -431,7 +431,7 @@ class RoomieViewModel(application: Application) : AndroidViewModel(application) 
         reason: String
     ) {
         viewModelScope.launch {
-            val user = currentUser.value ?: repository.getCurrentUserDirect()
+            val user = currentUser.value ?: repository.dao.getCurrentUserDirect()
             val hid = user?.householdId?.takeIf { it.isNotBlank() }
                 ?: fromUser.householdId.takeIf { it.isNotBlank() }
                 ?: toUser.householdId.takeIf { it.isNotBlank() }

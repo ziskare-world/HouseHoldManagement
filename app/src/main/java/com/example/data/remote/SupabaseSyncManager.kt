@@ -62,7 +62,7 @@ class SupabaseSyncManager(private val context: Context) {
      * Start background network watcher. Whenever device goes online, automatically
      * flush pending mutations and pull cloud updates.
      */
-    fun startAutoSyncWatcher(dao: RoomieDao, getHouseholdId: () -> String?) {
+    fun startAutoSyncWatcher(dao: RoomieDao, getHouseholdId: suspend () -> String?) {
         syncScope.launch {
             connectivityObserver.isOnline.collect { online ->
                 if (online) {
