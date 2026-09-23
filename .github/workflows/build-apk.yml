@@ -43,7 +43,15 @@ jobs:
         run: chmod +x gradlew
 
       - name: Build Android APK
-        run: ./gradlew assembleDebug --stacktrace --no-daemon
+        run: |
+          ./gradlew assembleDebug --stacktrace --no-daemon 2>&1 | tee build.log
+
+      - name: Upload Build Log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-log
+          path: build.log
 
       - name: Prepare APK Release Directory
         run: |
