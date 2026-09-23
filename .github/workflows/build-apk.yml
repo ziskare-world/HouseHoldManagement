@@ -44,19 +44,25 @@ jobs:
 
       - name: Build Android APK
         run: |
+          set -o pipefail
           ./gradlew assembleDebug --stacktrace --no-daemon 2>&1 | tee build.log
 
-      - name: Upload Build Log
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: build-log
-          path: build.log
+      - name: Push Debug Log on Failure
+        if: failure()
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git checkout -B debug-log
+          git add -f build.log
+          git commit -m "ci: debug build failure log"
+          git push origin debug-log --force
 
       - name: Prepare APK Release Directory
         run: |
           mkdir -p release-apks
-          DEBUG_APK=$(find app/build/outputs/apk/debug -name "*.apk" | head -n 1)
+          DEBUG_APK=$(find app/build -name "*.apk" | head -n 1)
 
           if [ -n "$DEBUG_APK" ] && [ -f "$DEBUG_APK" ]; then
             cp "$DEBUG_APK" release-apks/RoomieVault-v1.3.apk
@@ -79,10 +85,13 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          gh release upload v1.3 release-apks/*.apk --clobber 2>/dev/null || \
+          gh release delete v1.3 --yes 2>/dev/null || true
+          git tag -d v1.3 2>/dev/null || true
+          git push origin :refs/tags/v1.3 2>/dev/null || true
           gh release create v1.3 release-apks/*.apk \
             --title "RoomieVault v1.3 Release" \
             --notes "### 🚀 RoomieVault v1.3 Release
           - **Supabase Cloud Backend**: Connected to https://gxpxbnrehrawxwgzdqqm.supabase.co
-          - **Clean Authentication**: Focused Sign In & Sign Up flow with clean error messaging
-          - **Full Feature Suite**: Fair Splits, Sunday Chores, 1-Tap UPI payments, and receipt management" || true
+          - **Offline-First & Auto-Sync**: SQLite Room DB with background sync queue on reconnect
+          - **Email Confirmation**: Direct resend confirmation email button
+          - **Full Feature Suite**: Fair Splits, Sunday Chores, 1-Tap UPI payments, and receipt management"
