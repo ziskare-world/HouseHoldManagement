@@ -64,10 +64,18 @@ jobs:
           mkdir -p release-apks
           DEBUG_APK=$(find app/build -name "*.apk" | head -n 1)
 
+          VERSION=$(grep -o '"versionName": *"[^"]*"' version.json | cut -d'"' -f4)
+          if [ -z "$VERSION" ]; then
+            VERSION="1.5"
+          fi
+          TAG="v$VERSION"
+          echo "Building release for version $VERSION ($TAG)"
+          echo "VERSION=$VERSION" >> $GITHUB_ENV
+          echo "TAG=$TAG" >> $GITHUB_ENV
+
           if [ -n "$DEBUG_APK" ] && [ -f "$DEBUG_APK" ]; then
-            cp "$DEBUG_APK" release-apks/RoomieVault-v1.3.apk
-            cp "$DEBUG_APK" release-apks/RoomieVault-v1.2.apk
-            cp "$DEBUG_APK" release-apks/RoomieVault-v1.1.apk
+            cp "$DEBUG_APK" "release-apks/RoomieVault-${TAG}.apk"
+            cp "$DEBUG_APK" release-apks/RoomieVault-latest.apk
             cp "$DEBUG_APK" release-apks/app-release.apk
             cp "$DEBUG_APK" release-apks/app-debug.apk
           fi
@@ -77,20 +85,21 @@ jobs:
       - name: Upload APK Artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: RoomieVault-v1.3-APK
+          name: RoomieVault-${{ env.TAG }}-APK
           path: release-apks/*.apk
           retention-days: 30
 
-      - name: Publish GitHub Release v1.3
+      - name: Publish GitHub Release
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          gh release create v1.3 \
-            --title "RoomieVault v1.3 Release" \
-            --notes "### 🚀 RoomieVault v1.3 Release
-          - **Supabase Cloud Backend**: Connected to https://gxpxbnrehrawxwgzdqqm.supabase.co
-          - **Offline-First & Auto-Sync**: SQLite Room DB with background sync queue on reconnect
-          - **Email Confirmation**: Direct resend confirmation email button
-          - **Full Feature Suite**: Fair Splits, Sunday Chores, 1-Tap UPI payments, and receipt management" 2>/dev/null || true
+          gh release create "$TAG" \
+            --title "RoomieVault $TAG Release" \
+            --notes "### 🚀 RoomieVault $TAG Release
+          - **Roommate Invite with GitHub Download Link**: Invite code sharing includes GitHub APK download link
+          - **External Friends for Giving & Receiving Money**: Separate tracking for external friends with [Friend] badges
+          - **Gmail Account Search**: Real-time Supabase account search by Gmail ID
+          - **Automatic Debt Reconciliation**: Unregistered friends link automatically when they sign up later
+          - **Email Confirmed Popup**: Displays verified status and guides user back to login" 2>/dev/null || true
 
-          gh release upload v1.3 release-apks/*.apk --clobber || true
+          gh release upload "$TAG" release-apks/*.apk --clobber || true
