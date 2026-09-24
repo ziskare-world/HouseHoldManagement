@@ -25,6 +25,7 @@ import androidx.compose.material3.Badge
 import androidx.compose.material3.BadgedBox
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.NavigationRail
@@ -34,6 +35,7 @@ import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
@@ -106,6 +108,16 @@ fun MainScaffold(
 
     val snackbarHostState = remember { SnackbarHostState() }
     val scope = rememberCoroutineScope()
+
+    val statusMessage by viewModel.statusMessage.collectAsState()
+    val syncProgressMessage by viewModel.syncProgressMessage.collectAsState()
+
+    LaunchedEffect(statusMessage) {
+        statusMessage?.let { msg ->
+            snackbarHostState.showSnackbar(msg)
+            viewModel.clearStatusMessage()
+        }
+    }
 
     Crossfade(targetState = isLoggedIn, label = "AuthGateTransition") { loggedIn ->
         if (!loggedIn) {
@@ -214,6 +226,14 @@ fun MainScaffold(
                                     scope.launch { snackbarHostState.showSnackbar(msg) }
                                 }
                             )
+                            if (isSyncing) {
+                                LinearProgressIndicator(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .align(Alignment.TopCenter),
+                                    color = MaterialTheme.colorScheme.primary
+                                )
+                            }
                             SnackbarHost(
                                 hostState = snackbarHostState,
                                 modifier = Modifier.align(Alignment.BottomCenter)
@@ -280,6 +300,14 @@ fun MainScaffold(
                                     scope.launch { snackbarHostState.showSnackbar(msg) }
                                 }
                             )
+                            if (isSyncing) {
+                                LinearProgressIndicator(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .align(Alignment.TopCenter),
+                                    color = MaterialTheme.colorScheme.primary
+                                )
+                            }
                         }
                     }
                 }
@@ -350,7 +378,6 @@ fun RenderScreen(
                 },
                 onTriggerSync = {
                     viewModel.syncWithSupabase()
-                    onShowMessage("Triggered cloud sync with Supabase!")
                 },
                 onRotateSundayChore = { chore ->
                     viewModel.rotateSundayChore(chore)
@@ -387,7 +414,6 @@ fun RenderScreen(
                 onSelectMonth = { month -> viewModel.selectMonth(month) },
                 onAddExpense = { title, amount, cat, payer, split, customMembers, notes, dateMillis ->
                     viewModel.addExpense(title, amount, cat, payer, split, customMembers, notes, dateMillis)
-                    onShowMessage("Added expense: $title")
                 },
                 onUpdateExpense = { expense, customMembers ->
                     viewModel.updateExpense(expense, customMembers)
@@ -400,6 +426,10 @@ fun RenderScreen(
                 onUpdateBudget = { limit, threshold ->
                     viewModel.updateBudget(limit, threshold)
                     onShowMessage("Updated monthly budget limit!")
+                },
+                isSyncing = isSyncing,
+                onTriggerSync = {
+                    viewModel.syncWithSupabase()
                 }
             )
         }
@@ -512,7 +542,6 @@ fun RenderScreen(
                 },
                 onTriggerSync = {
                     viewModel.syncWithSupabase()
-                    onShowMessage("Cloud sync complete!")
                 },
                 onSignIn = { email, pass, cb ->
                     viewModel.signInWithSupabase(email, pass, cb)

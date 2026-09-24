@@ -4,7 +4,8 @@ import android.content.Context
 import android.content.SharedPreferences
 import android.util.Log
 import com.example.data.local.dao.RoomieDao
-import com.example.data.local.model.SyncQueueItem
+import com.example.data.local.model.*
+import com.example.notification.ChoreNotificationHelper
 import com.example.util.NetworkConnectivityObserver
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -21,6 +22,14 @@ enum class SyncStatus {
     OFFLINE,
     ERROR
 }
+
+data class SyncReport(
+    val success: Boolean,
+    val uploadedCount: Int,
+    val downloadedCount: Int,
+    val summaryMessage: String,
+    val errorMessage: String? = null
+)
 
 class SupabaseSyncManager(private val context: Context) {
     private val prefs: SharedPreferences =
@@ -60,7 +69,7 @@ class SupabaseSyncManager(private val context: Context) {
 
     /**
      * Start background network watcher. Whenever device goes online, automatically
-     * flush pending mutations and pull cloud updates.
+     * flush pending mutations and reconcile cloud updates.
      */
     fun startAutoSyncWatcher(dao: RoomieDao, getHouseholdId: suspend () -> String?) {
         syncScope.launch {
@@ -68,7 +77,7 @@ class SupabaseSyncManager(private val context: Context) {
                 if (online) {
                     Log.d("SupabaseSyncManager", "Device connected to internet. Triggering auto-sync.")
                     val householdId = getHouseholdId()
-                    performFullSync(dao, householdId.orEmpty())
+                    reconcileAndSync(dao, householdId.orEmpty())
                 } else {
                     Log.d("SupabaseSyncManager", "Device offline. Changes will queue locally.")
                     _syncStatus.value = SyncStatus.OFFLINE
@@ -76,6 +85,36 @@ class SupabaseSyncManager(private val context: Context) {
                 }
             }
         }
+    }
+
+    /**
+     * Ensures parent Household and User Profile exist in Supabase first.
+     * Prevents foreign key constraint violations (HTTP 409) when inserting child tables.
+     */
+    suspend fun ensureHouseholdAndUserSynced(dao: RoomieDao, householdId: String): Boolean {
+        if (!isSyncEnabled || supabaseUrl.isBlank() || supabaseAnonKey.isBlank()) return false
+        val hid = householdId.ifBlank { dao.getCurrentUserDirect()?.householdId.orEmpty() }
+        if (hid.isBlank()) return false
+
+        // 1. Ensure Household
+        val localHousehold = dao.getHouseholdDirect(hid)
+        if (localHousehold != null) {
+            val hSuccess = dataStore.pushHousehold(supabaseUrl, supabaseAnonKey, localHousehold)
+            if (!hSuccess) {
+                Log.w("SupabaseSyncManager", "Failed to sync household $hid to Supabase")
+            }
+        }
+
+        // 2. Ensure Members & User Profiles
+        val members = dao.getHouseholdMembersDirect(hid)
+        for (member in members) {
+            dataStore.pushUserProfile(supabaseUrl, supabaseAnonKey, member)
+        }
+        val currentUser = dao.getCurrentUserDirect()
+        if (currentUser != null && members.none { it.id == currentUser.id }) {
+            dataStore.pushUserProfile(supabaseUrl, supabaseAnonKey, currentUser)
+        }
+        return true
     }
 
     /**
@@ -90,6 +129,12 @@ class SupabaseSyncManager(private val context: Context) {
 
         val items = dao.getAllPendingSyncItems()
         if (items.isEmpty()) return@withContext 0
+
+        // Always ensure parent household & user profile exist first
+        val curUser = dao.getCurrentUserDirect()
+        if (curUser != null && curUser.householdId.isNotBlank()) {
+            ensureHouseholdAndUserSynced(dao, curUser.householdId)
+        }
 
         var successfulCount = 0
         for (item in items) {
@@ -108,93 +153,221 @@ class SupabaseSyncManager(private val context: Context) {
                 dao.deleteSyncQueueItem(item.id)
                 successfulCount++
             } else {
-                // If a record fails due to network break, stop processing remaining queue
-                Log.w("SupabaseSyncManager", "Failed to sync queue item ${item.id} to $table. Stopping batch.")
-                break
+                Log.w("SupabaseSyncManager", "Failed to sync queue item ${item.id} to $table.")
+                if (!isOnline()) break
             }
         }
         successfulCount
     }
 
     /**
-     * Complete two-way synchronization:
-     * 1. Push all pending queued mutations to Supabase.
-     * 2. Pull all remote records from Supabase into local Room DB.
+     * Comprehensive Two-Way Reconciler:
+     * 1. Checks whether data available locally and in Supabase match.
+     * 2. If not matched, uploads missing local data and downloads missing Supabase data.
+     * 3. Displays live progress and updates Android notification & in-app status.
      */
-    suspend fun performFullSync(dao: RoomieDao, householdId: String): Boolean = withContext(Dispatchers.IO) {
-        if (!isSyncEnabled || supabaseUrl.isBlank() || supabaseAnonKey.isBlank()) return@withContext false
-        if (!isOnline()) {
-            _syncStatus.value = SyncStatus.OFFLINE
-            _lastSyncMessage.value = "Offline (Local data saved)"
-            return@withContext false
+    suspend fun reconcileAndSync(
+        dao: RoomieDao,
+        householdId: String,
+        onProgress: (stage: String, percent: Int) -> Unit = { _, _ -> }
+    ): SyncReport = withContext(Dispatchers.IO) {
+        if (!isSyncEnabled || supabaseUrl.isBlank() || supabaseAnonKey.isBlank()) {
+            val msg = "Supabase cloud sync is not configured or disabled"
+            _syncStatus.value = SyncStatus.ERROR
+            _lastSyncMessage.value = msg
+            ChoreNotificationHelper.showSyncComplete(context, "Sync Configuration Required", msg)
+            return@withContext SyncReport(false, 0, 0, msg, msg)
         }
+
+        if (!isOnline()) {
+            val msg = "Offline: Changes saved locally in Room database"
+            _syncStatus.value = SyncStatus.OFFLINE
+            _lastSyncMessage.value = msg
+            ChoreNotificationHelper.showSyncComplete(context, "Offline Mode", msg)
+            return@withContext SyncReport(false, 0, 0, msg, "Device is offline")
+        }
+
+        val hid = householdId.ifBlank { dao.getCurrentUserDirect()?.householdId.orEmpty() }
+        if (hid.isBlank()) {
+            val msg = "No active household found to sync"
+            _syncStatus.value = SyncStatus.ERROR
+            _lastSyncMessage.value = msg
+            ChoreNotificationHelper.showSyncComplete(context, "Sync Error", msg)
+            return@withContext SyncReport(false, 0, 0, msg, msg)
+        }
+
+        _syncStatus.value = SyncStatus.SYNCING
+        var totalUploaded = 0
+        var totalDownloaded = 0
 
         try {
-            _syncStatus.value = SyncStatus.SYNCING
-            _lastSyncMessage.value = "Synchronizing with Supabase..."
+            // Stage 1: Check Connection & Ensure Household/Users (10%)
+            onProgress("Connecting to Supabase...", 10)
+            ChoreNotificationHelper.showSyncProgress(context, "RoomieVault Cloud Sync", "Connecting to Supabase...", 10, 100)
 
-            // Step 1: Process and flush offline mutation queue
-            val flushed = processPendingQueue(dao)
+            ensureHouseholdAndUserSynced(dao, hid)
+            processPendingQueue(dao)
 
-            // Step 2: Push any local entities if queue was empty or for initial sync
-            if (householdId.isNotBlank()) {
-                // Step 3: Pull cloud updates from roommates
-                val pullResult = dataStore.pullAllDataFromSupabase(supabaseUrl, supabaseAnonKey, householdId, dao)
-                if (pullResult.isSuccess) {
-                    lastSyncTimestamp = System.currentTimeMillis()
-                    _syncStatus.value = SyncStatus.IDLE
-                    _lastSyncMessage.value = "All synced ($flushed pushed, ${pullResult.getOrNull()} pulled)"
-                    return@withContext true
-                } else {
-                    _syncStatus.value = SyncStatus.IDLE
-                    _lastSyncMessage.value = "Push complete ($flushed items)"
-                    return@withContext true
-                }
+            // Stage 2: Compare & Reconcile Expenses (35%)
+            onProgress("Checking & synchronizing expenses...", 30)
+            ChoreNotificationHelper.showSyncProgress(context, "RoomieVault Cloud Sync", "Matching expenses...", 30, 100)
+
+            val localExpenses = dao.getExpensesByHouseholdDirect(hid)
+            val remoteExpenses = dataStore.fetchRemoteExpenses(supabaseUrl, supabaseAnonKey, hid)
+
+            val localExpMap = localExpenses.associateBy { it.id }
+            val remoteExpMap = remoteExpenses.associateBy { it.id }
+
+            // Upload local expenses missing in Supabase
+            val expensesToUpload = localExpenses.filter { it.id !in remoteExpMap }
+            for (exp in expensesToUpload) {
+                ChoreNotificationHelper.showSyncProgress(context, "RoomieVault Cloud Sync", "Uploading expense: ${exp.title}...", 35, 100)
+                val ok = dataStore.pushExpense(supabaseUrl, supabaseAnonKey, exp)
+                if (ok) totalUploaded++
             }
 
+            // Download Supabase expenses missing locally
+            val curUserId = dao.getCurrentUserDirect()?.id.orEmpty()
+            val expensesToDownload = remoteExpenses.filter { remoteExp ->
+                remoteExp.id !in localExpMap && (remoteExp.splitType != "PERSONAL" || curUserId.isBlank() || remoteExp.paidByUserId == curUserId)
+            }
+            if (expensesToDownload.isNotEmpty()) {
+                ChoreNotificationHelper.showSyncProgress(context, "RoomieVault Cloud Sync", "Downloading ${expensesToDownload.size} remote expenses...", 45, 100)
+                dao.insertExpenses(expensesToDownload)
+                totalDownloaded += expensesToDownload.size
+            }
+
+            // Stage 3: Compare & Reconcile Chores (55%)
+            onProgress("Checking & synchronizing chores...", 55)
+            ChoreNotificationHelper.showSyncProgress(context, "RoomieVault Cloud Sync", "Matching chore tasks...", 55, 100)
+
+            val localChores = dao.getAllChoresDirect(hid)
+            val remoteChores = dataStore.fetchRemoteChores(supabaseUrl, supabaseAnonKey, hid)
+
+            val localChoreMap = localChores.associateBy { it.id }
+            val remoteChoreMap = remoteChores.associateBy { it.id }
+
+            val choresToUpload = localChores.filter { it.id !in remoteChoreMap }
+            for (chore in choresToUpload) {
+                val ok = dataStore.pushChore(supabaseUrl, supabaseAnonKey, chore)
+                if (ok) totalUploaded++
+            }
+
+            val choresToDownload = remoteChores.filter { it.id !in localChoreMap }
+            if (choresToDownload.isNotEmpty()) {
+                dao.insertChores(choresToDownload)
+                totalDownloaded += choresToDownload.size
+            }
+
+            // Stage 4: Compare & Reconcile Settlement Debts (70%)
+            onProgress("Checking & synchronizing settlement debts...", 70)
+            ChoreNotificationHelper.showSyncProgress(context, "RoomieVault Cloud Sync", "Matching debts & UPI settlements...", 70, 100)
+
+            val localDebts = dao.getSettlementDebtsDirect(hid)
+            val remoteDebts = dataStore.fetchRemoteDebts(supabaseUrl, supabaseAnonKey, hid)
+
+            val localDebtMap = localDebts.associateBy { it.id }
+            val remoteDebtMap = remoteDebts.associateBy { it.id }
+
+            val debtsToUpload = localDebts.filter { it.id !in remoteDebtMap }
+            for (debt in debtsToUpload) {
+                val ok = dataStore.pushDebt(supabaseUrl, supabaseAnonKey, debt)
+                if (ok) totalUploaded++
+            }
+
+            val debtsToDownload = remoteDebts.filter { it.id !in localDebtMap }
+            if (debtsToDownload.isNotEmpty()) {
+                dao.insertDebts(debtsToDownload)
+                totalDownloaded += debtsToDownload.size
+            }
+
+            // Stage 5: Compare & Reconcile Savings Goals (85%)
+            onProgress("Checking & synchronizing savings goals...", 85)
+            val localSavings = dao.getSavingsGoalsDirect(hid)
+            val remoteSavings = dataStore.fetchRemoteSavingsGoals(supabaseUrl, supabaseAnonKey, hid)
+
+            val localSavingsMap = localSavings.associateBy { it.id }
+            val remoteSavingsMap = remoteSavings.associateBy { it.id }
+
+            for (goal in localSavings.filter { it.id !in remoteSavingsMap }) {
+                val ok = dataStore.pushSavingsGoal(supabaseUrl, supabaseAnonKey, goal)
+                if (ok) totalUploaded++
+            }
+            for (goal in remoteSavings.filter { it.id !in localSavingsMap }) {
+                dao.insertSavingsGoal(goal)
+                totalDownloaded++
+            }
+
+            // Stage 6: Compare & Reconcile Budget Configs (95%)
+            onProgress("Checking & synchronizing monthly budgets...", 95)
+            val localBudgets = dao.getAllBudgetConfigsDirect(hid)
+            val remoteBudgets = dataStore.fetchRemoteBudgetConfigs(supabaseUrl, supabaseAnonKey, hid)
+
+            val localBudgetMap = localBudgets.associateBy { "${it.monthYearKey}_${it.householdId}" }
+            val remoteBudgetMap = remoteBudgets.associateBy { "${it.monthYearKey}_${it.householdId}" }
+
+            for (b in localBudgets.filter { "${it.monthYearKey}_${it.householdId}" !in remoteBudgetMap }) {
+                val ok = dataStore.pushBudgetConfig(supabaseUrl, supabaseAnonKey, b)
+                if (ok) totalUploaded++
+            }
+            for (b in remoteBudgets.filter { "${it.monthYearKey}_${it.householdId}" !in localBudgetMap }) {
+                dao.insertBudgetConfig(b)
+                totalDownloaded++
+            }
+
+            // Completion (100%)
+            lastSyncTimestamp = System.currentTimeMillis()
             _syncStatus.value = SyncStatus.IDLE
-            _lastSyncMessage.value = "Synced with cloud"
-            true
+
+            val summary = if (totalUploaded == 0 && totalDownloaded == 0) {
+                "All data in sync! Local and Supabase match."
+            } else {
+                "Sync complete: $totalUploaded uploaded, $totalDownloaded downloaded"
+            }
+
+            _lastSyncMessage.value = summary
+            onProgress(summary, 100)
+            ChoreNotificationHelper.showSyncComplete(context, "RoomieVault Sync Complete", summary)
+
+            SyncReport(
+                success = true,
+                uploadedCount = totalUploaded,
+                downloadedCount = totalDownloaded,
+                summaryMessage = summary
+            )
         } catch (e: Exception) {
-            Log.e("SupabaseSyncManager", "Sync error", e)
+            Log.e("SupabaseSyncManager", "Reconciliation sync error", e)
+            val errMsg = "Sync error: ${e.localizedMessage ?: "Unknown error"}"
             _syncStatus.value = SyncStatus.ERROR
-            _lastSyncMessage.value = "Sync error: ${e.localizedMessage}"
-            false
+            _lastSyncMessage.value = errMsg
+            onProgress(errMsg, 100)
+            ChoreNotificationHelper.showSyncComplete(context, "RoomieVault Sync Error", errMsg)
+            SyncReport(
+                success = false,
+                uploadedCount = totalUploaded,
+                downloadedCount = totalDownloaded,
+                summaryMessage = errMsg,
+                errorMessage = e.localizedMessage
+            )
         }
+    }
+
+    suspend fun performFullSync(dao: RoomieDao, householdId: String): Boolean = withContext(Dispatchers.IO) {
+        val report = reconcileAndSync(dao, householdId)
+        report.success
     }
 
     suspend fun pushAllToCloud(dao: RoomieDao, householdId: String): Boolean = withContext(Dispatchers.IO) {
-        if (!isSyncEnabled || supabaseUrl.isBlank() || supabaseAnonKey.isBlank()) return@withContext false
-        try {
-            dao.getHouseholdDirect(householdId)?.let { dataStore.pushHousehold(supabaseUrl, supabaseAnonKey, it) }
-            dao.getHouseholdMembersDirect(householdId)
-                .forEach { dataStore.pushUserProfile(supabaseUrl, supabaseAnonKey, it) }
-            val currentUserId = dao.getCurrentUserDirect()?.id.orEmpty()
-            dao.getExpensesByMonthDirect(householdId, com.example.util.DateUtils.getCurrentMonthYearKey(), currentUserId)
-                .forEach { dataStore.pushExpense(supabaseUrl, supabaseAnonKey, it) }
-            dao.getAllChoresDirect(householdId).forEach { dataStore.pushChore(supabaseUrl, supabaseAnonKey, it) }
-            dao.getSettlementDebtsDirect(householdId).forEach { dataStore.pushDebt(supabaseUrl, supabaseAnonKey, it) }
-            dao.getSavingsGoalsDirect(householdId).forEach { dataStore.pushSavingsGoal(supabaseUrl, supabaseAnonKey, it) }
-            dao.getBudgetConfigDirect(com.example.util.DateUtils.getCurrentMonthYearKey(), householdId)
-                ?.let { dataStore.pushBudgetConfig(supabaseUrl, supabaseAnonKey, it) }
-            if (currentUserId.isNotBlank()) {
-                dao.getNotificationsForUserDirect(householdId, currentUserId)
-                    .forEach { dataStore.pushNotification(supabaseUrl, supabaseAnonKey, it) }
-            }
-            lastSyncTimestamp = System.currentTimeMillis()
-            true
-        } catch (e: Exception) {
-            Log.e("SupabaseSyncManager", "Push all failed", e)
-            false
-        }
+        val report = reconcileAndSync(dao, householdId)
+        report.success
     }
 
     suspend fun pullFromCloud(dao: RoomieDao, householdId: String): Result<Int> = withContext(Dispatchers.IO) {
-        if (!isSyncEnabled || supabaseUrl.isBlank() || supabaseAnonKey.isBlank()) {
-            return@withContext Result.failure(Exception("Supabase sync disabled or not configured"))
-        }
-        dataStore.pullAllDataFromSupabase(supabaseUrl, supabaseAnonKey, householdId, dao).also {
-            if (it.isSuccess) lastSyncTimestamp = System.currentTimeMillis()
+        val report = reconcileAndSync(dao, householdId)
+        if (report.success) {
+            Result.success(report.downloadedCount)
+        } else {
+            Result.failure(Exception(report.errorMessage ?: report.summaryMessage))
         }
     }
 

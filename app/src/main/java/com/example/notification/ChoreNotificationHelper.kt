@@ -14,6 +14,8 @@ object ChoreNotificationHelper {
     const val CHANNEL_CHORES = "roomie_chores_channel"
     const val CHANNEL_BUDGET = "roomie_budget_channel"
     const val CHANNEL_SETTLEMENTS = "roomie_settlements_channel"
+    const val CHANNEL_SYNC = "roomie_sync_channel"
+    const val SYNC_NOTIFICATION_ID = 2001
 
     fun createNotificationChannels(context: Context) {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
@@ -46,9 +48,18 @@ object ChoreNotificationHelper {
                 description = "Reminders for giving money to friends and verifying UPI settlements"
             }
 
+            val syncChannel = NotificationChannel(
+                CHANNEL_SYNC,
+                "Cloud Data Sync Status",
+                NotificationManager.IMPORTANCE_LOW
+            ).apply {
+                description = "Live progress and status alerts during Supabase data upload and download"
+            }
+
             manager.createNotificationChannel(choreChannel)
             manager.createNotificationChannel(budgetChannel)
             manager.createNotificationChannel(settlementChannel)
+            manager.createNotificationChannel(syncChannel)
         }
     }
 
@@ -172,5 +183,66 @@ object ChoreNotificationHelper {
         } catch (e: SecurityException) {
             // Permission not granted
         }
+    }
+
+    fun showSyncProgress(context: Context, title: String, message: String, progress: Int = 0, max: Int = 100) {
+        val intent = Intent(context, MainActivity::class.java).apply {
+            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
+        }
+        val pendingIntent = PendingIntent.getActivity(
+            context,
+            SYNC_NOTIFICATION_ID,
+            intent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+
+        val notification = NotificationCompat.Builder(context, CHANNEL_SYNC)
+            .setSmallIcon(android.R.drawable.stat_notify_sync)
+            .setContentTitle(title)
+            .setContentText(message)
+            .setProgress(max, progress, max == 0)
+            .setOngoing(true)
+            .setOnlyAlertOnce(true)
+            .setPriority(NotificationCompat.PRIORITY_LOW)
+            .setContentIntent(pendingIntent)
+            .build()
+
+        try {
+            NotificationManagerCompat.from(context).notify(SYNC_NOTIFICATION_ID, notification)
+        } catch (_: SecurityException) {}
+    }
+
+    fun showSyncComplete(context: Context, title: String, message: String) {
+        val intent = Intent(context, MainActivity::class.java).apply {
+            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
+        }
+        val pendingIntent = PendingIntent.getActivity(
+            context,
+            SYNC_NOTIFICATION_ID,
+            intent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+
+        val notification = NotificationCompat.Builder(context, CHANNEL_SYNC)
+            .setSmallIcon(android.R.drawable.stat_notify_sync_noanim)
+            .setContentTitle(title)
+            .setContentText(message)
+            .setStyle(NotificationCompat.BigTextStyle().bigText(message))
+            .setProgress(0, 0, false)
+            .setOngoing(false)
+            .setAutoCancel(true)
+            .setPriority(NotificationCompat.PRIORITY_DEFAULT)
+            .setContentIntent(pendingIntent)
+            .build()
+
+        try {
+            NotificationManagerCompat.from(context).notify(SYNC_NOTIFICATION_ID, notification)
+        } catch (_: SecurityException) {}
+    }
+
+    fun cancelSyncNotification(context: Context) {
+        try {
+            NotificationManagerCompat.from(context).cancel(SYNC_NOTIFICATION_ID)
+        } catch (_: SecurityException) {}
     }
 }

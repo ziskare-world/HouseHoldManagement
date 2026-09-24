@@ -15,6 +15,7 @@ import com.example.data.local.model.UserProfile
 import com.example.data.local.model.toJson
 import com.example.data.remote.SupabaseSyncManager
 import com.example.data.remote.SupabaseUser
+import com.example.data.remote.SyncReport
 import com.example.data.remote.SyncStatus
 import com.example.util.DateUtils
 import kotlinx.coroutines.CoroutineScope
@@ -107,6 +108,13 @@ class RoomieRepository(
                 syncManager.processPendingQueue(dao)
             }
         }
+    }
+
+    suspend fun reconcileWithCloud(
+        householdId: String,
+        onProgress: (stage: String, percent: Int) -> Unit = { _, _ -> }
+    ): SyncReport {
+        return syncManager.reconcileAndSync(dao, householdId, onProgress)
     }
 
     suspend fun regenerateHouseholdInviteCode(householdId: String): String {

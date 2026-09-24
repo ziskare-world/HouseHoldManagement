@@ -75,6 +75,9 @@ class RoomieViewModel(application: Application) : AndroidViewModel(application) 
     private val _syncingState = MutableStateFlow(false)
     val syncingState: StateFlow<Boolean> = _syncingState.asStateFlow()
 
+    private val _syncProgressMessage = MutableStateFlow<String?>(null)
+    val syncProgressMessage: StateFlow<String?> = _syncProgressMessage.asStateFlow()
+
     private val _statusMessage = MutableStateFlow<String?>(null)
     val statusMessage: StateFlow<String?> = _statusMessage.asStateFlow()
 
@@ -275,20 +278,29 @@ class RoomieViewModel(application: Application) : AndroidViewModel(application) 
         dateMillis: Long = System.currentTimeMillis()
     ) {
         viewModelScope.launch {
-            val user = currentUser.value ?: return@launch
+            val user = currentUser.value
+            val hid = user?.householdId?.ifBlank { null } ?: paidBy.householdId.ifBlank { "HOUSE_HOME925" }
             val effectiveMembers = if (splitType == "EQUAL") householdMembers.value else splitWithMembers
             repository.addExpense(
                 title = title,
                 amount = amount,
                 category = category,
                 paidBy = paidBy,
-                householdId = user.householdId,
+                householdId = hid,
                 splitType = splitType,
                 members = effectiveMembers,
                 notes = notes,
                 dateMillis = dateMillis
             )
             _statusMessage.value = "Added expense of ₹${amount.toInt()} for $title"
+            if (repository.syncManager.isOnline()) {
+                viewModelScope.launch {
+                    val rep = repository.reconcileWithCloud(hid)
+                    if (rep.success && rep.uploadedCount > 0) {
+                        _statusMessage.value = "Expense saved locally & synced to Supabase Cloud! (${rep.uploadedCount} uploaded)"
+                    }
+                }
+            }
 
             // Check budget alert
             val budget = currentBudgetConfig.value
@@ -811,18 +823,19 @@ class RoomieViewModel(application: Application) : AndroidViewModel(application) 
         viewModelScope.launch {
             _syncingState.value = true
             val user = currentUser.value
-            val hid = user?.householdId ?: "HOUSE_FLAT_402"
+            val hid = user?.householdId ?: "HOUSE_HOME925"
 
-            val pushOk = repository.syncManager.pushAllToCloud(repository.dao, hid)
-            val pullRes = repository.syncManager.pullFromCloud(repository.dao, hid)
+            _syncProgressMessage.value = "Checking connection with Supabase..."
+            _statusMessage.value = "Checking connection with Supabase..."
+
+            val report = repository.reconcileWithCloud(hid) { stage, _ ->
+                _syncProgressMessage.value = stage
+                _statusMessage.value = stage
+            }
 
             _syncingState.value = false
-            if (pushOk || pullRes.isSuccess) {
-                val pulledCount = pullRes.getOrNull() ?: 0
-                _statusMessage.value = "Synced with Supabase Cloud! ($pulledCount records updated)"
-            } else {
-                _statusMessage.value = "Saved offline in local Room database (Supabase cloud queued)"
-            }
+            _syncProgressMessage.value = null
+            _statusMessage.value = report.summaryMessage
         }
     }
 

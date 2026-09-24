@@ -64,6 +64,9 @@ interface RoomieDao {
     @Query("SELECT * FROM expenses ORDER BY dateMillis DESC")
     suspend fun getAllExpensesDirect(): List<ExpenseItem>
 
+    @Query("SELECT * FROM expenses WHERE householdId = :householdId ORDER BY dateMillis DESC")
+    suspend fun getExpensesByHouseholdDirect(householdId: String): List<ExpenseItem>
+
     @Query("SELECT * FROM expenses WHERE householdId = :householdId AND monthYearKey = :monthYearKey AND (splitType != 'PERSONAL' OR paidByUserId = :currentUserId) ORDER BY dateMillis DESC")
     suspend fun getExpensesByMonthDirect(householdId: String, monthYearKey: String, currentUserId: String): List<ExpenseItem>
 
@@ -148,6 +151,9 @@ interface RoomieDao {
 
     @Query("SELECT * FROM budget_configs WHERE monthYearKey = :monthYearKey AND householdId = :householdId LIMIT 1")
     suspend fun getBudgetConfigDirect(monthYearKey: String, householdId: String): BudgetConfig?
+
+    @Query("SELECT * FROM budget_configs WHERE householdId = :householdId")
+    suspend fun getAllBudgetConfigsDirect(householdId: String): List<BudgetConfig>
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertBudgetConfig(config: BudgetConfig)

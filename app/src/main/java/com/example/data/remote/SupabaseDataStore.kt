@@ -81,6 +81,7 @@ class SupabaseDataStore(
             put("name", household.name)
             put("invite_code", household.inviteCode)
             put("created_by_user_id", household.createdByUserId)
+            put("currency_symbol", household.currencySymbol)
             put("monthly_budget_limit", household.monthlyBudgetLimit)
             put("budget_warning_threshold", household.budgetWarningThreshold)
             put("created_at", household.createdAt)
@@ -228,7 +229,8 @@ class SupabaseDataStore(
             client.newCall(request).execute().use { response ->
                 val ok = response.isSuccessful || response.code in 200..299
                 if (!ok) {
-                    Log.w("SupabaseDataStore", "Upsert to $table responded code: ${response.code}")
+                    val errBody = try { response.body?.string() } catch (_: Exception) { null }
+                    Log.w("SupabaseDataStore", "Upsert to $table responded code: ${response.code}, err: $errBody")
                 }
                 ok
             }
@@ -510,6 +512,197 @@ class SupabaseDataStore(
             Log.e("SupabaseDataStore", "Pull all data error", e)
             Result.failure(e)
         }
+    }
+
+    suspend fun fetchRemoteHousehold(baseUrl: String, anonKey: String, householdId: String): Household? {
+        val json = queryTable(baseUrl, anonKey, "households", "id=eq.$householdId") ?: return null
+        val array = JSONArray(json)
+        if (array.length() == 0) return null
+        val obj = array.getJSONObject(0)
+        return Household(
+            id = obj.optString("id", householdId),
+            name = obj.optString("name", "My Household"),
+            inviteCode = obj.optString("invite_code", "FLAT402"),
+            createdByUserId = obj.optString("created_by_user_id", "USR_ADMIN"),
+            currencySymbol = obj.optString("currency_symbol", "₹"),
+            monthlyBudgetLimit = obj.optDouble("monthly_budget_limit", 30000.0),
+            budgetWarningThreshold = obj.optInt("budget_warning_threshold", 80),
+            createdAt = obj.optLong("created_at", System.currentTimeMillis())
+        )
+    }
+
+    suspend fun fetchRemoteUserProfiles(baseUrl: String, anonKey: String, householdId: String): List<UserProfile> {
+        val json = queryTable(baseUrl, anonKey, "user_profiles", "household_id=eq.$householdId") ?: return emptyList()
+        val array = JSONArray(json)
+        val list = mutableListOf<UserProfile>()
+        val curUserId = authManager.currentUserId
+        for (i in 0 until array.length()) {
+            val obj = array.getJSONObject(i)
+            val uid = obj.optString("id", "")
+            if (uid.isNotBlank()) {
+                list.add(
+                    UserProfile(
+                        id = uid,
+                        name = obj.optString("name", "Roommate"),
+                        email = obj.optString("email", ""),
+                        upiId = obj.optString("upi_id", ""),
+                        householdId = obj.optString("household_id", householdId),
+                        householdName = obj.optString("household_name", "Household"),
+                        avatarColorHex = obj.optString("avatar_color_hex", "#0F5132"),
+                        isCurrentUser = (uid == curUserId),
+                        isVirtual = obj.optBoolean("is_virtual", false),
+                        createdAt = obj.optLong("created_at", System.currentTimeMillis())
+                    )
+                )
+            }
+        }
+        return list
+    }
+
+    suspend fun fetchRemoteExpenses(baseUrl: String, anonKey: String, householdId: String): List<ExpenseItem> {
+        val json = queryTable(baseUrl, anonKey, "expenses", "household_id=eq.$householdId") ?: return emptyList()
+        val array = JSONArray(json)
+        val list = mutableListOf<ExpenseItem>()
+        for (i in 0 until array.length()) {
+            val obj = array.getJSONObject(i)
+            val id = obj.optString("id", "")
+            if (id.isNotBlank()) {
+                list.add(
+                    ExpenseItem(
+                        id = id,
+                        title = obj.optString("title", "Expense"),
+                        amount = obj.optDouble("amount", 0.0),
+                        category = obj.optString("category", "General"),
+                        dateMillis = obj.optLong("date_millis", System.currentTimeMillis()),
+                        monthYearKey = obj.optString("month_year_key", "2026-09"),
+                        paidByUserId = obj.optString("paid_by_user_id", ""),
+                        paidByName = obj.optString("paid_by_name", "Roommate"),
+                        splitType = obj.optString("split_type", "EQUAL"),
+                        splitWithUserIds = obj.optString("split_with_user_ids", ""),
+                        householdId = obj.optString("household_id", householdId),
+                        notes = obj.optString("notes", ""),
+                        createdAt = obj.optLong("created_at", System.currentTimeMillis())
+                    )
+                )
+            }
+        }
+        return list
+    }
+
+    suspend fun fetchRemoteChores(baseUrl: String, anonKey: String, householdId: String): List<ChoreTask> {
+        val json = queryTable(baseUrl, anonKey, "chore_tasks", "household_id=eq.$householdId") ?: return emptyList()
+        val array = JSONArray(json)
+        val list = mutableListOf<ChoreTask>()
+        for (i in 0 until array.length()) {
+            val obj = array.getJSONObject(i)
+            val id = obj.optString("id", "")
+            if (id.isNotBlank()) {
+                list.add(
+                    ChoreTask(
+                        id = id,
+                        title = obj.optString("title", "Chore"),
+                        description = obj.optString("description", ""),
+                        category = obj.optString("category", "Cleaning"),
+                        assignedToUserId = obj.optString("assigned_to_user_id", ""),
+                        assignedToUserName = obj.optString("assigned_to_user_name", "Roommate"),
+                        householdId = obj.optString("household_id", householdId),
+                        frequency = obj.optString("frequency", "DAILY"),
+                        rotationMemberIds = obj.optString("rotation_member_ids", ""),
+                        rotationIndex = obj.optInt("rotation_index", 0),
+                        scheduledTime = obj.optString("scheduled_time", "09:00 AM"),
+                        scheduledDayOfWeek = obj.optInt("scheduled_day_of_week", 1),
+                        scheduledDayOfMonth = obj.optInt("scheduled_day_of_month", 1),
+                        status = obj.optString("status", "PENDING"),
+                        points = obj.optInt("points", 10),
+                        lastCompletedDate = obj.optString("last_completed_date", ""),
+                        createdAt = obj.optLong("created_at", System.currentTimeMillis())
+                    )
+                )
+            }
+        }
+        return list
+    }
+
+    suspend fun fetchRemoteDebts(baseUrl: String, anonKey: String, householdId: String): List<SettlementDebt> {
+        val json = queryTable(baseUrl, anonKey, "settlement_debts", "household_id=eq.$householdId") ?: return emptyList()
+        val array = JSONArray(json)
+        val list = mutableListOf<SettlementDebt>()
+        for (i in 0 until array.length()) {
+            val obj = array.getJSONObject(i)
+            val id = obj.optString("id", "")
+            if (id.isNotBlank()) {
+                list.add(
+                    SettlementDebt(
+                        id = id,
+                        fromUserId = obj.optString("from_user_id", ""),
+                        fromUserName = obj.optString("from_user_name", ""),
+                        toUserId = obj.optString("to_user_id", ""),
+                        toUserName = obj.optString("to_user_name", ""),
+                        toUserUpiId = obj.optString("to_user_upi_id", ""),
+                        amount = obj.optDouble("amount", 0.0),
+                        reason = obj.optString("reason", ""),
+                        createdDateMillis = obj.optLong("created_date_millis", System.currentTimeMillis()),
+                        settledDateMillis = obj.optLong("settled_date_millis", 0L),
+                        status = obj.optString("status", "PENDING"),
+                        transactionRef = obj.optString("transaction_ref", ""),
+                        householdId = obj.optString("household_id", householdId)
+                    )
+                )
+            }
+        }
+        return list
+    }
+
+    suspend fun fetchRemoteSavingsGoals(baseUrl: String, anonKey: String, householdId: String): List<SavingsGoal> {
+        val json = queryTable(baseUrl, anonKey, "savings_goals", "household_id=eq.$householdId") ?: return emptyList()
+        val array = JSONArray(json)
+        val list = mutableListOf<SavingsGoal>()
+        for (i in 0 until array.length()) {
+            val obj = array.getJSONObject(i)
+            val id = obj.optString("id", "")
+            if (id.isNotBlank()) {
+                list.add(
+                    SavingsGoal(
+                        id = id,
+                        title = obj.optString("title", ""),
+                        targetAmount = obj.optDouble("target_amount", 0.0),
+                        currentAmount = obj.optDouble("current_amount", 0.0),
+                        category = obj.optString("category", "General"),
+                        targetMonthYear = obj.optString("target_month_year", ""),
+                        householdId = obj.optString("household_id", householdId),
+                        iconName = obj.optString("icon_name", "Savings"),
+                        colorHex = obj.optString("color_hex", "#3B82F6"),
+                        updatedAt = obj.optLong("updated_at", System.currentTimeMillis())
+                    )
+                )
+            }
+        }
+        return list
+    }
+
+    suspend fun fetchRemoteBudgetConfigs(baseUrl: String, anonKey: String, householdId: String): List<BudgetConfig> {
+        val json = queryTable(baseUrl, anonKey, "budget_configs", "household_id=eq.$householdId") ?: return emptyList()
+        val array = JSONArray(json)
+        val list = mutableListOf<BudgetConfig>()
+        for (i in 0 until array.length()) {
+            val obj = array.getJSONObject(i)
+            val monthKey = obj.optString("month_year_key", "")
+            if (monthKey.isNotBlank()) {
+                list.add(
+                    BudgetConfig(
+                        monthYearKey = monthKey,
+                        householdId = obj.optString("household_id", householdId),
+                        totalBudgetLimit = obj.optDouble("total_budget_limit", 30000.0),
+                        alertThresholdPercent = obj.optInt("alert_threshold_percent", 80),
+                        groceriesBudget = obj.optDouble("groceries_budget", 10000.0),
+                        rentUtilitiesBudget = obj.optDouble("rent_utilities_budget", 12000.0),
+                        foodDiningBudget = obj.optDouble("food_dining_budget", 5000.0),
+                        miscellaneousBudget = obj.optDouble("miscellaneous_budget", 3000.0)
+                    )
+                )
+            }
+        }
+        return list
     }
 
     private suspend fun queryTable(baseUrl: String, anonKey: String, table: String, filter: String): String? {
