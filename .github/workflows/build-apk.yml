@@ -45,7 +45,7 @@ jobs:
       - name: Build Android APK
         run: |
           set -o pipefail
-          ./gradlew assembleDebug --stacktrace --no-daemon 2>&1 | tee build.log
+          ./gradlew assembleRelease assembleDebug --stacktrace --no-daemon 2>&1 | tee build.log
 
       - name: Push Debug Log on Failure
         if: failure()
@@ -62,7 +62,10 @@ jobs:
       - name: Prepare APK Release Directory
         run: |
           mkdir -p release-apks
-          DEBUG_APK=$(find app/build -name "*.apk" | head -n 1)
+          RELEASE_APK=$(find app/build/outputs/apk/release -name "*.apk" | head -n 1)
+          if [ -z "$RELEASE_APK" ] || [ ! -f "$RELEASE_APK" ]; then
+            RELEASE_APK=$(find app/build -name "*.apk" | head -n 1)
+          fi
 
           VERSION=$(grep -o '"versionName": *"[^"]*"' version.json | cut -d'"' -f4)
           if [ -z "$VERSION" ]; then
@@ -73,11 +76,11 @@ jobs:
           echo "VERSION=$VERSION" >> $GITHUB_ENV
           echo "TAG=$TAG" >> $GITHUB_ENV
 
-          if [ -n "$DEBUG_APK" ] && [ -f "$DEBUG_APK" ]; then
-            cp "$DEBUG_APK" "release-apks/RoomieVault-${TAG}.apk"
-            cp "$DEBUG_APK" release-apks/RoomieVault-latest.apk
-            cp "$DEBUG_APK" release-apks/app-release.apk
-            cp "$DEBUG_APK" release-apks/app-debug.apk
+          if [ -n "$RELEASE_APK" ] && [ -f "$RELEASE_APK" ]; then
+            cp "$RELEASE_APK" "release-apks/RoomieVault-${TAG}.apk"
+            cp "$RELEASE_APK" release-apks/RoomieVault-latest.apk
+            cp "$RELEASE_APK" release-apks/app-release.apk
+            cp "$RELEASE_APK" release-apks/app-debug.apk
           fi
 
           ls -la release-apks/

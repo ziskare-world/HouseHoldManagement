@@ -24,16 +24,22 @@ android {
   }
 
   signingConfigs {
-    create("release") {
-      val keystorePath = System.getenv("KEYSTORE_PATH") ?: "${rootDir}/my-upload-key.jks"
-      val keystoreFile = file(keystorePath)
-      if (keystoreFile.exists()) {
-        storeFile = keystoreFile
-        storePassword = System.getenv("STORE_PASSWORD")
-        keyAlias = "upload"
-        keyPassword = System.getenv("KEY_PASSWORD")
-      } else {
-        // Fallback to debug keystore for easy direct APK installation without Google Play signing
+    val commonKeystoreFile = rootProject.file("roomievault-release.jks")
+    if (commonKeystoreFile.exists()) {
+      create("release") {
+        storeFile = commonKeystoreFile
+        storePassword = "roomievault123"
+        keyAlias = "roomievault"
+        keyPassword = "roomievault123"
+      }
+      getByName("debug") {
+        storeFile = commonKeystoreFile
+        storePassword = "roomievault123"
+        keyAlias = "roomievault"
+        keyPassword = "roomievault123"
+      }
+    } else {
+      create("release") {
         val debugConfig = signingConfigs.getByName("debug")
         storeFile = debugConfig.storeFile
         storePassword = debugConfig.storePassword
