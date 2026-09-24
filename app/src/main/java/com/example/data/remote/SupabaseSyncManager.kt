@@ -15,6 +15,9 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 
 enum class SyncStatus {
     IDLE,
@@ -67,17 +70,46 @@ class SupabaseSyncManager(private val context: Context) {
 
     fun isOnline(): Boolean = connectivityObserver.isCurrentlyOnline()
 
+    fun getTodayDateKey(): String {
+        return SimpleDateFormat("yyyy-MM-dd", Locale.getDefault()).format(Date())
+    }
+
     /**
-     * Start background network watcher. Whenever device goes online, automatically
-     * flush pending mutations and reconcile cloud updates.
+     * Checks if the scheduled cloud sync should run.
+     * Returns true ONLY ONCE per day on the first morning/initial open of the app.
+     */
+    fun shouldRunDailySync(): Boolean {
+        if (!isSyncEnabled || supabaseUrl.isBlank() || supabaseAnonKey.isBlank()) return false
+        val lastDate = prefs.getString("last_daily_sync_date", "")
+        return lastDate != getTodayDateKey()
+    }
+
+    /**
+     * Records that today's scheduled daily cloud sync has completed.
+     */
+    fun markDailySyncCompleted() {
+        prefs.edit().putString("last_daily_sync_date", getTodayDateKey()).apply()
+    }
+
+    /**
+     * Start background network watcher. Whenever device goes online, flushes
+     * pending offline mutations silently. Full cloud reconciliation runs ONLY ONCE
+     * per day on the first morning launch, not every time the app opens.
      */
     fun startAutoSyncWatcher(dao: RoomieDao, getHouseholdId: suspend () -> String?) {
         syncScope.launch {
             connectivityObserver.isOnline.collect { online ->
                 if (online) {
-                    Log.d("SupabaseSyncManager", "Device connected to internet. Triggering auto-sync.")
-                    val householdId = getHouseholdId()
-                    reconcileAndSync(dao, householdId.orEmpty())
+                    // Flush pending mutations recorded while offline
+                    processPendingQueue(dao)
+
+                    // Scheduled cloud sync: only run once per day on first morning open
+                    if (shouldRunDailySync()) {
+                        Log.d("SupabaseSyncManager", "First morning launch of the day detected. Running scheduled daily cloud sync.")
+                        markDailySyncCompleted()
+                        val householdId = getHouseholdId()
+                        reconcileAndSync(dao, householdId.orEmpty())
+                    }
                 } else {
                     Log.d("SupabaseSyncManager", "Device offline. Changes will queue locally.")
                     _syncStatus.value = SyncStatus.OFFLINE
@@ -317,6 +349,7 @@ class SupabaseSyncManager(private val context: Context) {
 
             // Completion (100%)
             lastSyncTimestamp = System.currentTimeMillis()
+            markDailySyncCompleted()
             _syncStatus.value = SyncStatus.IDLE
 
             val summary = if (totalUploaded == 0 && totalDownloaded == 0) {

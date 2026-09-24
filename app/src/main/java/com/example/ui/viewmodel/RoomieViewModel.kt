@@ -187,12 +187,11 @@ class RoomieViewModel(application: Application) : AndroidViewModel(application) 
             repository.purgeSampleMockDataIfPresent()
         }
 
-        // Automatic realtime sync when network is connected / reconnected
+        // Scheduled Daily Cloud Sync: runs once per day on the first app open of the day (morning)
         viewModelScope.launch {
-            connectivityObserver.isOnline.collect { online ->
-                if (online && isLoggedIn.value) {
-                    syncWithSupabase()
-                }
+            if (repository.syncManager.shouldRunDailySync() && repository.syncManager.isOnline() && isLoggedIn.value) {
+                repository.syncManager.markDailySyncCompleted()
+                syncWithSupabase()
             }
         }
 
@@ -293,14 +292,6 @@ class RoomieViewModel(application: Application) : AndroidViewModel(application) 
                 dateMillis = dateMillis
             )
             _statusMessage.value = "Added expense of ₹${amount.toInt()} for $title"
-            if (repository.syncManager.isOnline()) {
-                viewModelScope.launch {
-                    val rep = repository.reconcileWithCloud(hid)
-                    if (rep.success && rep.uploadedCount > 0) {
-                        _statusMessage.value = "Expense saved locally & synced to Supabase Cloud! (${rep.uploadedCount} uploaded)"
-                    }
-                }
-            }
 
             // Check budget alert
             val budget = currentBudgetConfig.value
@@ -834,6 +825,7 @@ class RoomieViewModel(application: Application) : AndroidViewModel(application) 
             }
 
             _syncingState.value = false
+            repository.syncManager.markDailySyncCompleted()
             _syncProgressMessage.value = null
             _statusMessage.value = report.summaryMessage
         }
