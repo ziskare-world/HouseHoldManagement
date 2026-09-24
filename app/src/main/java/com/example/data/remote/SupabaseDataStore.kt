@@ -260,6 +260,107 @@ class SupabaseDataStore(
         }
     }
 
+    /**
+     * Search registered and virtual users by email or name across Supabase
+     */
+    suspend fun searchUserProfiles(
+        baseUrl: String,
+        anonKey: String,
+        query: String
+    ): List<UserProfile> = withContext(Dispatchers.IO) {
+        val cleanQuery = query.trim()
+        if (cleanQuery.isBlank() || baseUrl.isBlank() || anonKey.isBlank()) return@withContext emptyList()
+        try {
+            val encoded = java.net.URLEncoder.encode(cleanQuery, "UTF-8")
+            val url = "${baseUrl.removeSuffix("/")}/rest/v1/user_profiles?or=(email.ilike.*$encoded*,name.ilike.*$encoded*)&select=*"
+            val request = Request.Builder()
+                .url(url)
+                .addHeader("apikey", anonKey)
+                .addHeader("Authorization", getAuthHeader(anonKey))
+                .get()
+                .build()
+
+            client.newCall(request).execute().use { response ->
+                if (response.isSuccessful) {
+                    val bodyStr = response.body?.string() ?: "[]"
+                    val jsonArr = JSONArray(bodyStr)
+                    val list = mutableListOf<UserProfile>()
+                    for (i in 0 until jsonArr.length()) {
+                        val obj = jsonArr.getJSONObject(i)
+                        list.add(
+                            UserProfile(
+                                id = obj.getString("id"),
+                                name = obj.optString("name", "User"),
+                                email = obj.optString("email", ""),
+                                upiId = obj.optString("upi_id", ""),
+                                householdId = obj.optString("household_id", "HOUSE_DEFAULT"),
+                                householdName = obj.optString("household_name", ""),
+                                avatarColorHex = obj.optString("avatar_color_hex", "#0F5132"),
+                                isCurrentUser = false,
+                                isVirtual = obj.optBoolean("is_virtual", false),
+                                createdAt = obj.optLong("created_at", System.currentTimeMillis())
+                            )
+                        )
+                    }
+                    list
+                } else {
+                    emptyList()
+                }
+            }
+        } catch (e: Exception) {
+            Log.e("SupabaseDataStore", "searchUserProfiles error: ${e.message}")
+            emptyList()
+        }
+    }
+
+    /**
+     * Find a registered account by email (exact case-insensitive match)
+     */
+    suspend fun findUserProfileByEmail(
+        baseUrl: String,
+        anonKey: String,
+        email: String
+    ): UserProfile? = withContext(Dispatchers.IO) {
+        val cleanEmail = email.trim()
+        if (cleanEmail.isBlank() || baseUrl.isBlank() || anonKey.isBlank()) return@withContext null
+        try {
+            val encoded = java.net.URLEncoder.encode(cleanEmail, "UTF-8")
+            val url = "${baseUrl.removeSuffix("/")}/rest/v1/user_profiles?email=ilike.$encoded&is_virtual=eq.false&select=*"
+            val request = Request.Builder()
+                .url(url)
+                .addHeader("apikey", anonKey)
+                .addHeader("Authorization", getAuthHeader(anonKey))
+                .get()
+                .build()
+
+            client.newCall(request).execute().use { response ->
+                if (response.isSuccessful) {
+                    val bodyStr = response.body?.string() ?: "[]"
+                    val jsonArr = JSONArray(bodyStr)
+                    if (jsonArr.length() > 0) {
+                        val obj = jsonArr.getJSONObject(0)
+                        return@withContext UserProfile(
+                            id = obj.getString("id"),
+                            name = obj.optString("name", "User"),
+                            email = obj.optString("email", ""),
+                            upiId = obj.optString("upi_id", ""),
+                            householdId = obj.optString("household_id", "HOUSE_DEFAULT"),
+                            householdName = obj.optString("household_name", ""),
+                            avatarColorHex = obj.optString("avatar_color_hex", "#0F5132"),
+                            isCurrentUser = false,
+                            isVirtual = false,
+                            createdAt = obj.optLong("created_at", System.currentTimeMillis())
+                        )
+                    }
+                }
+                null
+            }
+        } catch (e: Exception) {
+            Log.e("SupabaseDataStore", "findUserProfileByEmail error: ${e.message}")
+            null
+        }
+    }
+
     // ==========================================
     // PULL / SYNC FROM SUPABASE DATA STORE
     // ==========================================

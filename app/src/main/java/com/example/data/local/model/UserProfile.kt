@@ -15,4 +15,7 @@ data class UserProfile(
     val isCurrentUser: Boolean = false,
     val isVirtual: Boolean = false, // Roommate added manually before they register
     val createdAt: Long = System.currentTimeMillis()
-)
+) {
+    val isExternalFriend: Boolean
+        get() = householdName == "EXTERNAL_FRIEND" || householdName.startsWith("FRIEND")
+}

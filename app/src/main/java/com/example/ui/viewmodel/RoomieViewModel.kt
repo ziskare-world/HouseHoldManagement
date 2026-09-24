@@ -21,6 +21,7 @@ import com.example.util.AppUpdateManager
 import com.example.util.DateUtils
 import com.example.util.UpiPaymentHelper
 import com.example.util.NetworkConnectivityObserver
+import androidx.compose.runtime.mutableStateOf
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -29,6 +30,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 
@@ -95,6 +97,26 @@ class RoomieViewModel(application: Application) : AndroidViewModel(application) 
             if (hid.isNotBlank()) repository.getHouseholdMembers(hid) else flowOf(emptyList())
         }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    val roommates: StateFlow<List<UserProfile>> = householdMembers
+        .map { list -> list.filter { !it.isExternalFriend } }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    val externalFriends: StateFlow<List<UserProfile>> = householdMembers
+        .map { list -> list.filter { it.isExternalFriend } }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    val showEmailConfirmedPopup = mutableStateOf(false)
+    val emailConfirmedAddress = mutableStateOf("")
+
+    fun triggerEmailConfirmedPopup(email: String = "") {
+        emailConfirmedAddress.value = email
+        showEmailConfirmedPopup.value = true
+    }
+
+    fun dismissEmailConfirmedPopup() {
+        showEmailConfirmedPopup.value = false
+    }
 
     val household: StateFlow<Household?> = currentUser
         .flatMapLatest { user ->
@@ -601,12 +623,54 @@ class RoomieViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
-    // --- Roommates & Household ---
-    fun addVirtualRoommate(name: String, email: String, upiId: String, colorHex: String) {
+    // --- Roommates & External Friends ---
+    fun searchUserInCloud(query: String, onResult: (List<UserProfile>) -> Unit) {
+        viewModelScope.launch {
+            val list = repository.searchUserInCloud(query)
+            onResult(list)
+        }
+    }
+
+    fun addPerson(
+        name: String,
+        email: String,
+        upiId: String,
+        isExternalFriend: Boolean,
+        colorHex: String,
+        onComplete: ((Boolean, String) -> Unit)? = null
+    ) {
         viewModelScope.launch {
             val user = currentUser.value ?: return@launch
-            repository.addRoommate(name, email, upiId, user.householdId, colorHex)
-            _statusMessage.value = "Roommate $name added to household"
+            val result = repository.addPerson(
+                name = name,
+                email = email,
+                upiId = upiId,
+                householdId = user.householdId,
+                isExternalFriend = isExternalFriend,
+                avatarColor = colorHex
+            )
+            _statusMessage.value = result.second
+            onComplete?.invoke(result.first, result.second)
+        }
+    }
+
+    fun addVirtualRoommate(name: String, email: String, upiId: String, colorHex: String) {
+        addPerson(name, email, upiId, isExternalFriend = false, colorHex = colorHex)
+    }
+
+    fun addExternalFriend(
+        name: String,
+        email: String,
+        upiId: String,
+        colorHex: String,
+        onComplete: ((Boolean, String) -> Unit)? = null
+    ) {
+        addPerson(name, email, upiId, isExternalFriend = true, colorHex = colorHex, onComplete = onComplete)
+    }
+
+    fun reconcileVirtualUsers() {
+        viewModelScope.launch {
+            repository.reconcileVirtualUsersWithCloud()
         }
     }
 

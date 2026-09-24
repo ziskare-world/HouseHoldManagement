@@ -36,13 +36,17 @@ import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Group
+import androidx.compose.material.icons.filled.Handshake
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.Payments
+import androidx.compose.material.icons.filled.PersonAdd
 import androidx.compose.material.icons.filled.QrCode
 import androidx.compose.material.icons.filled.QrCodeScanner
 import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Share
+import androidx.compose.material.icons.filled.Verified
 import androidx.compose.material.icons.filled.Wifi
 import androidx.compose.material.icons.filled.WifiOff
 import androidx.compose.material3.AlertDialog
@@ -104,6 +108,8 @@ fun HouseholdProfileScreen(
     syncManager: SupabaseSyncManager,
     onUpdateProfile: (name: String, upiId: String, email: String) -> Unit,
     onAddRoommate: (name: String, email: String, upiId: String, colorHex: String) -> Unit,
+    onAddPerson: ((name: String, email: String, upiId: String, isExternalFriend: Boolean, colorHex: String, onComplete: ((Boolean, String) -> Unit)?) -> Unit)? = null,
+    onSearchUserInCloud: ((query: String, onResult: (List<UserProfile>) -> Unit) -> Unit)? = null,
     onUpdateRoommate: ((UserProfile) -> Unit)? = null,
     onDeleteRoommate: ((userId: String, userName: String) -> Unit)? = null,
     onJoinHousehold: (code: String, name: String) -> Unit,
@@ -418,15 +424,25 @@ fun HouseholdProfileScreen(
                                 }
                                 IconButton(
                                     onClick = {
+                                        val hTitle = household?.name?.ifBlank { "our household" } ?: "our household"
+                                        val shareText = """
+                                            🏡 Join $hTitle on RoomieVault!
+
+                                            1️⃣ Download the latest RoomieVault app from GitHub:
+                                            https://github.com/ziskare-world/HouseHoldManagement/releases/latest
+
+                                            2️⃣ Open the app, sign in with your email, and use this Household Invite Code:
+                                            👉 $code 👈
+
+                                            Manage shared expenses, chores, and settlements with all roommates!
+                                        """.trimIndent()
+
                                         val sendIntent = android.content.Intent().apply {
                                             action = android.content.Intent.ACTION_SEND
-                                            putExtra(
-                                                android.content.Intent.EXTRA_TEXT,
-                                                "Join my household on RoomieVault! Download the app and enter Invite Code: $code"
-                                            )
+                                            putExtra(android.content.Intent.EXTRA_TEXT, shareText)
                                             type = "text/plain"
                                         }
-                                        context.startActivity(android.content.Intent.createChooser(sendIntent, "Share Household Code"))
+                                        context.startActivity(android.content.Intent.createChooser(sendIntent, "Share Household Invite Code & App Link"))
                                     }
                                 ) {
                                     Icon(
@@ -435,12 +451,16 @@ fun HouseholdProfileScreen(
                                         tint = MaterialTheme.colorScheme.primary
                                     )
                                 }
+
                             }
                         }
                     }
                 }
             }
         }
+
+        val roommates = members.filter { !it.isExternalFriend }
+        val externalFriends = members.filter { it.isExternalFriend }
 
         // Roommates Header & Full-Width Add Button
         item {
@@ -459,7 +479,7 @@ fun HouseholdProfileScreen(
                     )
                     Spacer(modifier = Modifier.width(8.dp))
                     Text(
-                        text = "Household Roommates (${members.size})",
+                        text = "Household Roommates (${roommates.size})",
                         style = MaterialTheme.typography.titleMedium,
                         fontWeight = FontWeight.Bold
                     )
@@ -472,15 +492,15 @@ fun HouseholdProfileScreen(
                         .height(48.dp),
                     shape = RoundedCornerShape(12.dp)
                 ) {
-                    Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(18.dp))
+                    Icon(Icons.Default.PersonAdd, contentDescription = null, modifier = Modifier.size(18.dp))
                     Spacer(modifier = Modifier.width(6.dp))
-                    Text("Add Roommate", fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                    Text("Add Roommate or External Friend", fontWeight = FontWeight.Bold, fontSize = 14.sp)
                 }
             }
         }
 
-        // Members List
-        if (members.isEmpty()) {
+        // Roommates List
+        if (roommates.isEmpty()) {
             item {
                 Card(
                     modifier = Modifier.fillMaxWidth(),
@@ -506,7 +526,7 @@ fun HouseholdProfileScreen(
                             fontWeight = FontWeight.Bold
                         )
                         Text(
-                            text = "Tap '+ Add Roommate' above to add your flatmates and start splitting expenses & chores!",
+                            text = "Tap '+ Add Roommate or External Friend' above to invite flatmates and split expenses!",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                             textAlign = androidx.compose.ui.text.style.TextAlign.Center
@@ -515,7 +535,7 @@ fun HouseholdProfileScreen(
                 }
             }
         } else {
-            items(members, key = { it.id }) { member ->
+            items(roommates, key = { it.id }) { member ->
                 Card(
                     modifier = Modifier.fillMaxWidth(),
                     shape = RoundedCornerShape(16.dp),
@@ -579,10 +599,19 @@ fun HouseholdProfileScreen(
                                             )
                                         }
                                     }
+                                    if (!member.isVirtual) {
+                                        Spacer(modifier = Modifier.width(4.dp))
+                                        Icon(
+                                            imageVector = Icons.Default.Verified,
+                                            contentDescription = "Verified Account",
+                                            tint = Color(0xFF10B981),
+                                            modifier = Modifier.size(16.dp)
+                                        )
+                                    }
                                 }
 
                                 Text(
-                                    text = member.email.ifBlank { "Roommate" },
+                                    text = if (member.email.isNotBlank()) member.email else if (member.isVirtual) "Personal Contact (Unregistered)" else "Roommate",
                                     style = MaterialTheme.typography.bodySmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
@@ -636,6 +665,161 @@ fun HouseholdProfileScreen(
                                         modifier = Modifier.size(18.dp)
                                     )
                                 }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // External Friends Section (For Giving and Receiving Money)
+        if (externalFriends.isNotEmpty()) {
+            item {
+                Spacer(modifier = Modifier.height(14.dp))
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Handshake,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.secondary
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(
+                        text = "External Friends (${externalFriends.size})",
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+            }
+
+            items(externalFriends, key = { it.id }) { friend ->
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(16.dp),
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                    elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(16.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .size(44.dp)
+                                    .clip(CircleShape)
+                                    .background(
+                                        try {
+                                            Color(android.graphics.Color.parseColor(friend.avatarColorHex))
+                                        } catch (e: Exception) {
+                                            MaterialTheme.colorScheme.secondary
+                                        }
+                                    ),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Text(
+                                    text = friend.name.take(1).uppercase(),
+                                    color = Color.White,
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = 18.sp
+                                )
+                            }
+
+                            Spacer(modifier = Modifier.width(12.dp))
+
+                            Column {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Text(
+                                        text = friend.name,
+                                        style = MaterialTheme.typography.titleMedium,
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                    Spacer(modifier = Modifier.width(6.dp))
+                                    Surface(
+                                        shape = RoundedCornerShape(6.dp),
+                                        color = MaterialTheme.colorScheme.secondaryContainer,
+                                        modifier = Modifier.padding(2.dp)
+                                    ) {
+                                        Text(
+                                            text = "FRIEND",
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = MaterialTheme.colorScheme.onSecondaryContainer,
+                                            fontWeight = FontWeight.Bold,
+                                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                                        )
+                                    }
+                                    if (!friend.isVirtual) {
+                                        Spacer(modifier = Modifier.width(4.dp))
+                                        Icon(
+                                            imageVector = Icons.Default.Verified,
+                                            contentDescription = "Verified Account",
+                                            tint = Color(0xFF10B981),
+                                            modifier = Modifier.size(16.dp)
+                                        )
+                                    }
+                                }
+
+                                Text(
+                                    text = if (friend.email.isNotBlank()) friend.email else if (friend.isVirtual) "Personal contact (unregistered)" else "Friend",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+
+                                if (friend.upiId.isNotBlank()) {
+                                    Row(
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(4.dp),
+                                        modifier = Modifier.padding(top = 2.dp)
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Default.QrCode,
+                                            contentDescription = null,
+                                            modifier = Modifier.size(12.dp),
+                                            tint = Color(0xFF10B981)
+                                        )
+                                        Text(
+                                            text = friend.upiId,
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = Color(0xFF0F5132),
+                                            fontFamily = FontFamily.Monospace
+                                        )
+                                    }
+                                }
+                            }
+                        }
+
+                        // Friend Action Buttons (Edit & Delete)
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            IconButton(
+                                onClick = { editingRoommate = friend },
+                                modifier = Modifier.size(36.dp)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Edit,
+                                    contentDescription = "Edit Details",
+                                    tint = MaterialTheme.colorScheme.primary,
+                                    modifier = Modifier.size(18.dp)
+                                )
+                            }
+
+                            IconButton(
+                                onClick = { deletingRoommate = friend },
+                                modifier = Modifier.size(36.dp)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Delete,
+                                    contentDescription = "Remove Friend",
+                                    tint = MaterialTheme.colorScheme.error.copy(alpha = 0.7f),
+                                    modifier = Modifier.size(18.dp)
+                                )
                             }
                         }
                     }
@@ -1025,13 +1209,18 @@ fun HouseholdProfileScreen(
         )
     }
 
-    // 3. Add Roommate Dialog
+    // 3. Add Person (Roommate or External Friend) Dialog
     if (showAddRoommateDialog) {
+        var isExternalFriend by remember { mutableStateOf(false) }
         var roommateName by remember { mutableStateOf("") }
         var roommateEmail by remember { mutableStateOf("") }
         var roommateUpi by remember { mutableStateOf("") }
         var selectedColor by remember { mutableStateOf("#3B82F6") }
         var showQrScanner by remember { mutableStateOf(false) }
+
+        var isSearching by remember { mutableStateOf(false) }
+        var searchMessage by remember { mutableStateOf<String?>(null) }
+        var isVerifiedFound by remember { mutableStateOf(false) }
 
         val colors = listOf("#3B82F6", "#EC4899", "#F59E0B", "#8B5CF6", "#10B981", "#EF4444")
 
@@ -1051,27 +1240,158 @@ fun HouseholdProfileScreen(
 
         AlertDialog(
             onDismissRequest = { showAddRoommateDialog = false },
-            title = { Text("Add Roommate", fontWeight = FontWeight.Bold) },
+            title = {
+                Text(
+                    if (isExternalFriend) "Add External Friend" else "Add Roommate",
+                    fontWeight = FontWeight.Bold
+                )
+            },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    // Type Selector Tab
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(10.dp))
+                            .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f))
+                            .padding(4.dp),
+                        horizontalArrangement = Arrangement.spacedBy(4.dp)
+                    ) {
+                        Surface(
+                            modifier = Modifier
+                                .weight(1f)
+                                .clip(RoundedCornerShape(8.dp))
+                                .clickable {
+                                    isExternalFriend = false
+                                    searchMessage = null
+                                },
+                            color = if (!isExternalFriend) MaterialTheme.colorScheme.primary else Color.Transparent
+                        ) {
+                            Text(
+                                text = "🏠 Roommate",
+                                modifier = Modifier.padding(vertical = 8.dp),
+                                textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                                style = MaterialTheme.typography.labelMedium,
+                                fontWeight = FontWeight.Bold,
+                                color = if (!isExternalFriend) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        Surface(
+                            modifier = Modifier
+                                .weight(1f)
+                                .clip(RoundedCornerShape(8.dp))
+                                .clickable {
+                                    isExternalFriend = true
+                                    searchMessage = null
+                                },
+                            color = if (isExternalFriend) MaterialTheme.colorScheme.secondary else Color.Transparent
+                        ) {
+                            Text(
+                                text = "🤝 Friend (Money)",
+                                modifier = Modifier.padding(vertical = 8.dp),
+                                textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                                style = MaterialTheme.typography.labelMedium,
+                                fontWeight = FontWeight.Bold,
+                                color = if (isExternalFriend) MaterialTheme.colorScheme.onSecondary else MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
+
+                    // Email with Search Button
+                    OutlinedTextField(
+                        value = roommateEmail,
+                        onValueChange = {
+                            roommateEmail = it
+                            searchMessage = null
+                            isVerifiedFound = false
+                        },
+                        label = { Text("Gmail / Email Address") },
+                        placeholder = { Text("friend@gmail.com") },
+                        trailingIcon = {
+                            if (isSearching) {
+                                CircularProgressIndicator(
+                                    modifier = Modifier.size(20.dp),
+                                    strokeWidth = 2.dp
+                                )
+                            } else {
+                                IconButton(
+                                    onClick = {
+                                        val q = roommateEmail.trim()
+                                        if (q.isBlank()) {
+                                            Toast.makeText(context, "Enter a Gmail ID / email to search", Toast.LENGTH_SHORT).show()
+                                            return@IconButton
+                                        }
+                                        isSearching = true
+                                        searchMessage = null
+                                        onSearchUserInCloud?.invoke(q) { results ->
+                                            isSearching = false
+                                            val registered = results.firstOrNull { it.email.equals(q, ignoreCase = true) && !it.isVirtual }
+                                                ?: results.firstOrNull { it.name.contains(q, ignoreCase = true) && !it.isVirtual }
+                                            if (registered != null) {
+                                                isVerifiedFound = true
+                                                roommateName = registered.name
+                                                if (registered.upiId.isNotBlank()) roommateUpi = registered.upiId
+                                                searchMessage = "Account found: ${registered.name} (${registered.email})\nUPI ID: ${registered.upiId.ifBlank { "Not set" }}"
+                                            } else {
+                                                isVerifiedFound = false
+                                                searchMessage = "No account found yet. Details will be saved personally for your transactions. When they register with this Gmail ID later, all transactions will link automatically!"
+                                            }
+                                        }
+                                    }
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.Search,
+                                        contentDescription = "Search Gmail ID",
+                                        tint = MaterialTheme.colorScheme.primary
+                                    )
+                                }
+                            }
+                        },
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(12.dp),
+                        singleLine = true
+                    )
+
+                    // Search Feedback Card
+                    if (searchMessage != null) {
+                        Surface(
+                            shape = RoundedCornerShape(10.dp),
+                            color = if (isVerifiedFound) Color(0xFFE8F5E9) else Color(0xFFE3F2FD),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(10.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                Icon(
+                                    imageVector = if (isVerifiedFound) Icons.Default.Verified else Icons.Default.AutoAwesome,
+                                    contentDescription = null,
+                                    tint = if (isVerifiedFound) Color(0xFF2E7D32) else Color(0xFF1565C0),
+                                    modifier = Modifier.size(20.dp)
+                                )
+                                Text(
+                                    text = searchMessage ?: "",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = if (isVerifiedFound) Color(0xFF1B5E20) else Color(0xFF0D47A1),
+                                    fontWeight = if (isVerifiedFound) FontWeight.SemiBold else FontWeight.Normal
+                                )
+                            }
+                        }
+                    }
+
+                    // Name Field
                     OutlinedTextField(
                         value = roommateName,
                         onValueChange = { roommateName = it },
-                        label = { Text("Roommate Name *") },
+                        label = { Text(if (isExternalFriend) "Friend Name *" else "Roommate Name *") },
                         placeholder = { Text("e.g. Priya Patel") },
                         modifier = Modifier.fillMaxWidth(),
                         shape = RoundedCornerShape(12.dp),
                         singleLine = true
                     )
-                    OutlinedTextField(
-                        value = roommateEmail,
-                        onValueChange = { roommateEmail = it },
-                        label = { Text("Email / Phone (Optional)") },
-                        placeholder = { Text("priya@example.com") },
-                        modifier = Modifier.fillMaxWidth(),
-                        shape = RoundedCornerShape(12.dp),
-                        singleLine = true
-                    )
+
+                    // UPI ID Field
                     OutlinedTextField(
                         value = roommateUpi,
                         onValueChange = { roommateUpi = it },
@@ -1091,7 +1411,41 @@ fun HouseholdProfileScreen(
                         singleLine = true
                     )
 
-                    Spacer(modifier = Modifier.height(4.dp))
+                    // Share app link button for Roommates
+                    if (!isExternalFriend) {
+                        OutlinedButton(
+                            onClick = {
+                                val code = household?.inviteCode?.ifBlank { "FLAT402" } ?: "FLAT402"
+                                val hTitle = household?.name?.ifBlank { "our household" } ?: "our household"
+                                val shareText = """
+                                    🏡 Join $hTitle on RoomieVault!
+
+                                    1️⃣ Download the latest RoomieVault app from GitHub:
+                                    https://github.com/ziskare-world/HouseHoldManagement/releases/latest
+
+                                    2️⃣ Open the app, register with your email, and use this Household Invite Code:
+                                    👉 $code 👈
+
+                                    Manage shared expenses, chores, and settlements with all roommates!
+                                """.trimIndent()
+
+                                val sendIntent = android.content.Intent().apply {
+                                    action = android.content.Intent.ACTION_SEND
+                                    putExtra(android.content.Intent.EXTRA_TEXT, shareText)
+                                    type = "text/plain"
+                                }
+                                context.startActivity(android.content.Intent.createChooser(sendIntent, "Share Household Invite Code & App Link"))
+                            },
+                            modifier = Modifier.fillMaxWidth(),
+                            shape = RoundedCornerShape(10.dp)
+                        ) {
+                            Icon(Icons.Default.Share, contentDescription = null, modifier = Modifier.size(16.dp))
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text("Share App Link & Invite Code", fontSize = 12.sp)
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(2.dp))
                     Text(
                         text = "Avatar Color",
                         style = MaterialTheme.typography.labelSmall,
@@ -1128,13 +1482,32 @@ fun HouseholdProfileScreen(
                 Button(
                     onClick = {
                         if (roommateName.isNotBlank()) {
-                            onAddRoommate(roommateName.trim(), roommateEmail.trim(), roommateUpi.trim(), selectedColor)
+                            if (onAddPerson != null) {
+                                onAddPerson(
+                                    roommateName.trim(),
+                                    roommateEmail.trim(),
+                                    roommateUpi.trim(),
+                                    isExternalFriend,
+                                    selectedColor
+                                ) { success, msg ->
+                                    Toast.makeText(context, msg, Toast.LENGTH_LONG).show()
+                                }
+                            } else {
+                                onAddRoommate(
+                                    roommateName.trim(),
+                                    roommateEmail.trim(),
+                                    roommateUpi.trim(),
+                                    selectedColor
+                                )
+                            }
                             showAddRoommateDialog = false
+                        } else {
+                            Toast.makeText(context, "Please enter a name", Toast.LENGTH_SHORT).show()
                         }
                     },
                     shape = RoundedCornerShape(12.dp)
                 ) {
-                    Text("Add Roommate")
+                    Text(if (isExternalFriend) "Add Friend" else "Add Roommate")
                 }
             },
             dismissButton = {

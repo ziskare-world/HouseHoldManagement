@@ -11,6 +11,8 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material3.AlertDialog
@@ -20,6 +22,9 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.ViewModelProvider
 import com.example.data.local.model.SettlementDebt
@@ -168,6 +173,62 @@ class MainActivity : ComponentActivity() {
                         }
                     )
                 }
+
+                // Email Confirmed Popup Box (Requested by user)
+                if (viewModel.showEmailConfirmedPopup.value) {
+                    AlertDialog(
+                        onDismissRequest = { viewModel.dismissEmailConfirmedPopup() },
+                        icon = {
+                            Icon(
+                                imageVector = Icons.Default.CheckCircle,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.size(48.dp)
+                            )
+                        },
+                        title = {
+                            Text("Email ID Confirmed! 🎉", fontWeight = FontWeight.Bold)
+                        },
+                        text = {
+                            Text(
+                                "Your email ID has been confirmed successfully!\n\nPlease return to the app and sign in with your email and password to start managing your household expenses, roommates, and friends."
+                            )
+                        },
+                        confirmButton = {
+                            Button(
+                                onClick = {
+                                    viewModel.dismissEmailConfirmedPopup()
+                                },
+                                shape = RoundedCornerShape(12.dp)
+                            ) {
+                                Text("Return to App / Sign In")
+                            }
+                        }
+                    )
+                }
+            }
+        }
+
+        handleDeepLinkIntent(intent)
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        handleDeepLinkIntent(intent)
+    }
+
+    private fun handleDeepLinkIntent(intent: Intent?) {
+        val data: Uri? = intent?.data
+        if (data != null) {
+            val uriStr = data.toString()
+            if (uriStr.contains("confirm", ignoreCase = true) ||
+                uriStr.contains("verify", ignoreCase = true) ||
+                uriStr.contains("access_token") ||
+                data.scheme == "roomievault"
+            ) {
+                val emailParam = data.getQueryParameter("email") ?: ""
+                viewModel.triggerEmailConfirmedPopup(emailParam)
             }
         }
     }

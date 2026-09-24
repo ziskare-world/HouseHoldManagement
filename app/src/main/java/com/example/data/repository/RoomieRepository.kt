@@ -18,11 +18,13 @@ import com.example.data.remote.SupabaseUser
 import com.example.data.remote.SyncReport
 import com.example.data.remote.SyncStatus
 import com.example.util.DateUtils
+import android.util.Log
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.util.UUID
 
 class RoomieRepository(
@@ -377,6 +379,81 @@ class RoomieRepository(
         recordAndPush("BUDGET_CONFIG", "${config.monthYearKey}_${config.householdId}", "UPSERT", config.toJson())
     }
 
+    suspend fun searchUserInCloud(query: String): List<UserProfile> = withContext(Dispatchers.IO) {
+        val url = syncManager.supabaseUrl
+        val anonKey = syncManager.supabaseAnonKey
+        if (url.isBlank() || anonKey.isBlank()) return@withContext emptyList()
+        syncManager.dataStore.searchUserProfiles(url, anonKey, query)
+    }
+
+    suspend fun addPerson(
+        name: String,
+        email: String,
+        upiId: String,
+        householdId: String,
+        isExternalFriend: Boolean,
+        avatarColor: String
+    ): Pair<Boolean, String> = withContext(Dispatchers.IO) {
+        val url = syncManager.supabaseUrl
+        val anonKey = syncManager.supabaseAnonKey
+        val cleanEmail = email.trim()
+        val cleanName = name.trim()
+        val cleanUpi = upiId.trim()
+
+        // 1. Check if the user already has a registered account in Supabase
+        var registeredUser: UserProfile? = null
+        if (cleanEmail.isNotBlank() && url.isNotBlank() && anonKey.isNotBlank()) {
+            registeredUser = syncManager.dataStore.findUserProfileByEmail(url, anonKey, cleanEmail)
+        }
+
+        if (registeredUser != null) {
+            // User ALREADY has an account!
+            val user = registeredUser.copy(
+                name = cleanName.ifBlank { registeredUser.name },
+                upiId = if (cleanUpi.isNotBlank()) cleanUpi else registeredUser.upiId,
+                householdId = householdId,
+                householdName = if (isExternalFriend) "EXTERNAL_FRIEND" else registeredUser.householdName,
+                avatarColorHex = if (avatarColor.isNotBlank()) avatarColor else registeredUser.avatarColorHex,
+                isCurrentUser = false,
+                isVirtual = false
+            )
+            dao.insertUser(user)
+            recordAndPush("USER_PROFILE", user.id, "UPSERT", user.toJson())
+
+            // Reconcile any existing debts/expenses associated with this email
+            reconcileVirtualUsersWithCloud()
+
+            Pair(
+                true,
+                "✅ Found registered account for ${user.name} (${user.email})! Added & linked successfully."
+            )
+        } else {
+            // User does NOT have an account yet in this app.
+            // Save their details personally for transaction / ledger purposes.
+            val virtualId = "USR_" + UUID.randomUUID().toString().take(8).uppercase()
+            val user = UserProfile(
+                id = virtualId,
+                name = cleanName,
+                email = cleanEmail,
+                upiId = cleanUpi,
+                householdId = householdId,
+                householdName = if (isExternalFriend) "EXTERNAL_FRIEND" else "Household",
+                avatarColorHex = avatarColor,
+                isCurrentUser = false,
+                isVirtual = true
+            )
+            dao.insertUser(user)
+            recordAndPush("USER_PROFILE", user.id, "UPSERT", user.toJson())
+
+            val msg = if (isExternalFriend) {
+                "Saved $cleanName personally as external friend. When they register with $cleanEmail, all transactions will link automatically!"
+            } else {
+                "Saved $cleanName as roommate. When they register with $cleanEmail, all transactions will link automatically!"
+            }
+            Pair(true, msg)
+        }
+    }
+
     suspend fun addRoommate(
         name: String,
         email: String,
@@ -384,18 +461,96 @@ class RoomieRepository(
         householdId: String,
         avatarColor: String
     ) {
-        val user = UserProfile(
-            id = "USR_" + UUID.randomUUID().toString().take(8).uppercase(),
-            name = name.trim(),
-            email = email.trim(),
-            upiId = upiId.trim(),
+        addPerson(
+            name = name,
+            email = email,
+            upiId = upiId,
             householdId = householdId,
-            avatarColorHex = avatarColor,
-            isCurrentUser = false,
-            isVirtual = true
+            isExternalFriend = false,
+            avatarColor = avatarColor
         )
-        dao.insertUser(user)
-        recordAndPush("USER_PROFILE", user.id, "UPSERT", user.toJson())
+    }
+
+    /**
+     * Reconciles all virtual users with registered cloud accounts.
+     * When an external friend or roommate creates their account later with the same Gmail address,
+     * this automatically migrates all transactions, debts, expenses, and splits to their real account ID!
+     */
+    suspend fun reconcileVirtualUsersWithCloud(): Int = withContext(Dispatchers.IO) {
+        val url = syncManager.supabaseUrl
+        val anonKey = syncManager.supabaseAnonKey
+        if (url.isBlank() || anonKey.isBlank()) return@withContext 0
+
+        var mergedCount = 0
+        try {
+            val virtualUsers = dao.getAllVirtualUsersDirect()
+            for (vUser in virtualUsers) {
+                val cleanEmail = vUser.email.trim()
+                if (cleanEmail.isBlank()) continue
+
+                val realUser = syncManager.dataStore.findUserProfileByEmail(url, anonKey, cleanEmail)
+                if (realUser != null && realUser.id != vUser.id && !realUser.isVirtual) {
+                    Log.i("RoomieRepo", "Merging virtual user ${vUser.name} (${vUser.id}) -> real user ${realUser.name} (${realUser.id})")
+
+                    val targetUpi = if (realUser.upiId.isNotBlank()) realUser.upiId else vUser.upiId
+
+                    // 1. Migrate debts in Room DB
+                    dao.migrateDebtDebtor(vUser.id, realUser.id, realUser.name)
+                    dao.migrateDebtCreditor(vUser.id, realUser.id, realUser.name, targetUpi)
+
+                    // 2. Migrate expenses in Room DB
+                    dao.migrateExpensePayer(vUser.id, realUser.id, realUser.name)
+                    val splitExpenses = dao.getExpensesWithSplitMember(vUser.id)
+                    for (exp in splitExpenses) {
+                        val updatedSplits = exp.splitWithUserIds.split(",")
+                            .map { if (it.trim() == vUser.id) realUser.id else it.trim() }
+                            .filter { it.isNotBlank() }
+                            .distinct()
+                            .joinToString(",")
+                        dao.insertExpense(exp.copy(splitWithUserIds = updatedSplits, isSynced = false))
+                    }
+
+                    // 3. Insert real user with preserved relationship (e.g. EXTERNAL_FRIEND)
+                    val mergedProfile = realUser.copy(
+                        upiId = targetUpi,
+                        householdId = vUser.householdId,
+                        householdName = vUser.householdName,
+                        isCurrentUser = false,
+                        isVirtual = false
+                    )
+                    dao.insertUser(mergedProfile)
+
+                    // 4. Delete virtual user locally
+                    dao.deleteUser(vUser.id)
+
+                    // 5. In Supabase: push merged user profile, delete old virtual user profile
+                    syncManager.dataStore.pushUserProfile(url, anonKey, mergedProfile)
+                    syncManager.dataStore.deleteRecord(url, anonKey, "user_profiles", vUser.id)
+
+                    // 6. Push all updated debts & expenses to Supabase
+                    val updatedDebts = dao.getSettlementDebtsDirect(vUser.householdId)
+                    for (d in updatedDebts) {
+                        if (d.fromUserId == realUser.id || d.toUserId == realUser.id) {
+                            syncManager.dataStore.pushDebt(url, anonKey, d)
+                        }
+                    }
+                    val updatedHouseholdExpenses = dao.getExpensesByHouseholdDirect(vUser.householdId)
+                    for (e in updatedHouseholdExpenses) {
+                        if (e.paidByUserId == realUser.id || e.splitWithUserIds.contains(realUser.id)) {
+                            syncManager.dataStore.pushExpense(url, anonKey, e)
+                        }
+                    }
+
+                    mergedCount++
+                }
+            }
+        } catch (e: Exception) {
+            Log.e("RoomieRepo", "reconcileVirtualUsersWithCloud error: ${e.message}")
+        }
+        if (mergedCount > 0) {
+            Log.i("RoomieRepo", "Successfully reconciled $mergedCount virtual users with registered cloud accounts.")
+        }
+        mergedCount
     }
 
     suspend fun updateRoommate(user: UserProfile) {
@@ -494,10 +649,14 @@ class RoomieRepository(
 
         // Perform full two-way sync on login
         syncManager.performFullSync(dao, supabaseUser.householdId)
+        // Automatically reconcile any virtual users matched with cloud accounts
+        reconcileVirtualUsersWithCloud()
     }
 
     suspend fun syncAllWithSupabase(householdId: String): Boolean {
-        return syncManager.performFullSync(dao, householdId)
+        val result = syncManager.performFullSync(dao, householdId)
+        reconcileVirtualUsersWithCloud()
+        return result
     }
 
     suspend fun clearSampleDataAndSetupOriginalHousehold(

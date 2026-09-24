@@ -1,10 +1,10 @@
 {
-  "versionCode": 5,
-  "versionName": "1.4",
+  "versionCode": 6,
+  "versionName": "1.5",
   "minSupportedVersionCode": 1,
   "isMandatory": false,
-  "title": "RoomieVault v1.4 - Two-Way Cloud Sync & Reconcile",
-  "description": "• Full two-way reconciliation between local SQLite Room database and Supabase Cloud\n• Real-time system notifications with progress while uploading and downloading\n• Sync All button on Expenses and Profile with diff checking\n• Roommate invite code management and live duty rotation",
-  "downloadUrl": "https://github.com/ziskare-world/HouseHoldManagement/releases/tag/v1.4",
-  "directApkUrl": "https://github.com/ziskare-world/HouseHoldManagement/releases/download/v1.4/RoomieVault-v1.4.apk"
+  "title": "RoomieVault v1.5 - Roommate Invite & External Friends Tracking",
+  "description": "• Roommate invite code share with GitHub APK download link\n• External Friends for giving & receiving money with Gmail ID account lookup\n• Automatic debt & expense linking when unregistered friends create an account later\n• Email Confirmed popup notification\n• Morning scheduled once-daily cloud sync",
+  "downloadUrl": "https://github.com/ziskare-world/HouseHoldManagement/releases/tag/v1.5",
+  "directApkUrl": "https://github.com/ziskare-world/HouseHoldManagement/releases/download/v1.5/RoomieVault-v1.5.apk"
 }

@@ -504,6 +504,12 @@ fun RenderScreen(
                         )
                         onShowMessage("Payment initiated & recorded in shared expenses!")
                     }
+                },
+                onAddPerson = { name, email, upi, isFriend, color, cb ->
+                    viewModel.addPerson(name, email, upi, isFriend, color, cb)
+                },
+                onSearchUserInCloud = { query, cb ->
+                    viewModel.searchUserInCloud(query, cb)
                 }
             )
         }
@@ -521,6 +527,12 @@ fun RenderScreen(
                 onAddRoommate = { name, email, upi, color ->
                     viewModel.addRoommate(name, email, upi, color)
                     onShowMessage("Added roommate: $name")
+                },
+                onAddPerson = { name, email, upi, isFriend, color, cb ->
+                    viewModel.addPerson(name, email, upi, isFriend, color, cb)
+                },
+                onSearchUserInCloud = { query, cb ->
+                    viewModel.searchUserInCloud(query, cb)
                 },
                 onUpdateRoommate = { user ->
                     viewModel.updateRoommate(user)

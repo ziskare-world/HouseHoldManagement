@@ -44,6 +44,27 @@ interface RoomieDao {
     @Query("DELETE FROM user_profiles WHERE id = :userId")
     suspend fun deleteUser(userId: String)
 
+    @Query("SELECT * FROM user_profiles WHERE isVirtual = 1")
+    suspend fun getAllVirtualUsersDirect(): List<UserProfile>
+
+    @Query("SELECT * FROM user_profiles WHERE LOWER(TRIM(email)) = LOWER(TRIM(:email)) LIMIT 1")
+    suspend fun getUserByEmailDirect(email: String): UserProfile?
+
+    @Query("SELECT * FROM user_profiles WHERE id = :userId LIMIT 1")
+    suspend fun getUserByIdDirect(userId: String): UserProfile?
+
+    @Query("UPDATE settlement_debts SET fromUserId = :newUserId, fromUserName = :newUserName, isSynced = 0 WHERE fromUserId = :oldUserId")
+    suspend fun migrateDebtDebtor(oldUserId: String, newUserId: String, newUserName: String)
+
+    @Query("UPDATE settlement_debts SET toUserId = :newUserId, toUserName = :newUserName, toUserUpiId = CASE WHEN :newUpiId != '' THEN :newUpiId ELSE toUserUpiId END, isSynced = 0 WHERE toUserId = :oldUserId")
+    suspend fun migrateDebtCreditor(oldUserId: String, newUserId: String, newUserName: String, newUpiId: String)
+
+    @Query("UPDATE expenses SET paidByUserId = :newUserId, paidByName = :newUserName, isSynced = 0 WHERE paidByUserId = :oldUserId")
+    suspend fun migrateExpensePayer(oldUserId: String, newUserId: String, newUserName: String)
+
+    @Query("SELECT * FROM expenses WHERE splitWithUserIds LIKE '%' || :oldUserId || '%'")
+    suspend fun getExpensesWithSplitMember(oldUserId: String): List<ExpenseItem>
+
     // --- Household ---
     @Query("SELECT * FROM households WHERE id = :householdId LIMIT 1")
     fun getHousehold(householdId: String): Flow<Household?>
