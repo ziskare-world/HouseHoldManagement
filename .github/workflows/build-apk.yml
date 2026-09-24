@@ -93,4 +93,4 @@ jobs:
           - **Email Confirmation**: Direct resend confirmation email button
           - **Full Feature Suite**: Fair Splits, Sunday Chores, 1-Tap UPI payments, and receipt management" 2>/dev/null || true
 
-          gh release upload v1.3 release-apks/*.apk --clobber
+          gh release upload v1.3 release-apks/*.apk --clobber || true

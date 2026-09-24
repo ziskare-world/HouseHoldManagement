@@ -4,7 +4,7 @@
   "minSupportedVersionCode": 1,
   "isMandatory": true,
   "title": "RoomieVault v1.3 Update",
-  "description": "• Updated Supabase backend to dedicated instance\n• Streamlined authentication with clean Sign In and Sign Up\n• Instant cloud sync for expenses, Sunday chores & UPI settlements",
+  "description": "• Offline-First: Full SQLite Room persistence with auto background sync on reconnect\n• Dedicated Supabase cloud instance for real-time collaboration\n• Resend confirmation email button\n• Fair Splits, Sunday Chores & 1-Tap UPI settlements",
   "downloadUrl": "https://github.com/ziskare-world/HouseHoldManagement/releases/tag/v1.3",
   "directApkUrl": "https://github.com/ziskare-world/HouseHoldManagement/releases/download/v1.3/RoomieVault-v1.3.apk"
 }
