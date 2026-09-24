@@ -87,6 +87,7 @@ fun MainScaffold(
     val isSyncing by viewModel.isSyncing.collectAsState()
     val selectedMonthKey by viewModel.selectedMonthKey.collectAsState()
     val appUpdateInfo by viewModel.appUpdateInfo.collectAsState()
+    val updateDownloadState by viewModel.updateDownloadState.collectAsState()
     val notifications by viewModel.notifications.collectAsState()
     val unreadNotificationsCount by viewModel.unreadNotificationsCount.collectAsState()
 
@@ -320,7 +321,9 @@ fun MainScaffold(
         if (updateInfo.hasUpdate) {
             AppUpdateDialog(
                 updateInfo = updateInfo,
-                onUpdateClick = { viewModel.launchAppUpdate() },
+                downloadState = updateDownloadState,
+                onStartDownload = { viewModel.startInAppUpdateDownload(updateInfo) },
+                onInstallUpdate = { apkFile -> viewModel.installDownloadedApk(apkFile) },
                 onDismiss = { viewModel.dismissUpdateDialog() }
             )
         }

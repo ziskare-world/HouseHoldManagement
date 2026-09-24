@@ -1,10 +1,10 @@
 {
-  "versionCode": 6,
-  "versionName": "1.5",
+  "versionCode": 7,
+  "versionName": "1.6",
   "minSupportedVersionCode": 1,
   "isMandatory": false,
-  "title": "RoomieVault v1.5 - Roommate Invite & External Friends Tracking",
-  "description": "• Roommate invite code share with GitHub APK download link\n• External Friends for giving & receiving money with Gmail ID account lookup\n• Automatic debt & expense linking when unregistered friends create an account later\n• Email Confirmed popup notification\n• Morning scheduled once-daily cloud sync",
-  "downloadUrl": "https://github.com/ziskare-world/HouseHoldManagement/releases/tag/v1.5",
-  "directApkUrl": "https://github.com/ziskare-world/HouseHoldManagement/releases/download/v1.5/RoomieVault-v1.5.apk"
+  "title": "RoomieVault v1.6 - In-App Updates & Mutual Roommate Sync",
+  "description": "• In-App APK Download with real-time percentage progress bar\n• One-click direct in-app package installer (no need to open browser)\n• Permanent unified signing key to prevent package conflicts\n• Mutual Roommate Visibility: Roommates added by flatmates automatically appear on both accounts\n• Automatic cloud household assignment and bidirectional sync",
+  "downloadUrl": "https://github.com/ziskare-world/HouseHoldManagement/releases/tag/v1.6",
+  "directApkUrl": "https://github.com/ziskare-world/HouseHoldManagement/releases/download/v1.6/RoomieVault-v1.6.apk"
 }

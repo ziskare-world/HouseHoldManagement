@@ -18,9 +18,11 @@ import com.example.data.repository.RoomieRepository
 import com.example.notification.ChoreNotificationHelper
 import com.example.util.AppUpdateInfo
 import com.example.util.AppUpdateManager
+import com.example.util.UpdateDownloadState
 import com.example.util.DateUtils
 import com.example.util.UpiPaymentHelper
 import com.example.util.NetworkConnectivityObserver
+import java.io.File
 import androidx.compose.runtime.mutableStateOf
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -85,6 +87,7 @@ class RoomieViewModel(application: Application) : AndroidViewModel(application) 
 
     private val _appUpdateInfo = MutableStateFlow<AppUpdateInfo?>(null)
     val appUpdateInfo: StateFlow<AppUpdateInfo?> = _appUpdateInfo.asStateFlow()
+    val updateDownloadState: StateFlow<UpdateDownloadState> = appUpdateManager.downloadState
 
     val authState: StateFlow<SupabaseAuthState> = repository.syncManager.authManager.authState
 
@@ -242,6 +245,17 @@ class RoomieViewModel(application: Application) : AndroidViewModel(application) 
 
     fun dismissUpdateDialog() {
         _appUpdateInfo.value = null
+        appUpdateManager.resetDownloadState()
+    }
+
+    fun startInAppUpdateDownload(info: AppUpdateInfo) {
+        viewModelScope.launch {
+            appUpdateManager.downloadApk(info)
+        }
+    }
+
+    fun installDownloadedApk(apkFile: File) {
+        appUpdateManager.installApk(apkFile)
     }
 
     fun launchAppUpdate() {

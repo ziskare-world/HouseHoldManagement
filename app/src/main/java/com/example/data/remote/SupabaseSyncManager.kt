@@ -233,19 +233,88 @@ class SupabaseSyncManager(private val context: Context) {
         var totalDownloaded = 0
 
         try {
-            // Stage 1: Check Connection & Ensure Household/Users (10%)
+            // Stage 1: Check Connection & Detect Household Assignment (10%)
             onProgress("Connecting to Supabase...", 10)
             ChoreNotificationHelper.showSyncProgress(context, "RoomieVault Cloud Sync", "Connecting to Supabase...", 10, 100)
 
-            ensureHouseholdAndUserSynced(dao, hid)
+            var effectiveHid = hid
+            val curUser = dao.getCurrentUserDirect()
+            if (curUser != null && curUser.email.isNotBlank()) {
+                val remoteProfile = dataStore.findUserProfileByEmail(supabaseUrl, supabaseAnonKey, curUser.email)
+                if (remoteProfile != null && remoteProfile.householdId.isNotBlank() && remoteProfile.householdId != curUser.householdId) {
+                    Log.i("SupabaseSyncManager", "Current user was assigned to new household in cloud: ${remoteProfile.householdId} (previously ${curUser.householdId})")
+                    effectiveHid = remoteProfile.householdId
+                    val updatedCur = curUser.copy(
+                        householdId = remoteProfile.householdId,
+                        householdName = remoteProfile.householdName
+                    )
+                    dao.insertUser(updatedCur)
+
+                    val remoteH = dataStore.fetchRemoteHousehold(supabaseUrl, supabaseAnonKey, effectiveHid)
+                    if (remoteH != null) {
+                        dao.insertHousehold(remoteH)
+                    } else {
+                        dao.insertHousehold(
+                            Household(
+                                id = effectiveHid,
+                                name = remoteProfile.householdName.ifBlank { "Household" },
+                                inviteCode = effectiveHid.removePrefix("HOUSE_"),
+                                createdByUserId = curUser.id
+                            )
+                        )
+                    }
+                }
+            }
+
+            ensureHouseholdAndUserSynced(dao, effectiveHid)
             processPendingQueue(dao)
 
-            // Stage 2: Compare & Reconcile Expenses (35%)
-            onProgress("Checking & synchronizing expenses...", 30)
-            ChoreNotificationHelper.showSyncProgress(context, "RoomieVault Cloud Sync", "Matching expenses...", 30, 100)
+            // Stage 1.5: Compare & Reconcile Roommates / User Profiles (20%)
+            onProgress("Checking & synchronizing roommates...", 20)
+            ChoreNotificationHelper.showSyncProgress(context, "RoomieVault Cloud Sync", "Synchronizing roommates...", 20, 100)
 
-            val localExpenses = dao.getExpensesByHouseholdDirect(hid)
-            val remoteExpenses = dataStore.fetchRemoteExpenses(supabaseUrl, supabaseAnonKey, hid)
+            val localMembers = dao.getHouseholdMembersDirect(effectiveHid)
+            val remoteMembers = dataStore.fetchRemoteUserProfiles(supabaseUrl, supabaseAnonKey, effectiveHid)
+
+            val localMemberMap = localMembers.associateBy { it.id }
+            val remoteMemberMap = remoteMembers.associateBy { it.id }
+            val currentUserId = curUser?.id.orEmpty()
+            val currentUserEmail = curUser?.email.orEmpty().trim().lowercase()
+
+            // Upload local household members missing in Supabase
+            for (localMem in localMembers) {
+                if (localMem.id !in remoteMemberMap) {
+                    val ok = dataStore.pushUserProfile(supabaseUrl, supabaseAnonKey, localMem)
+                    if (ok) totalUploaded++
+                }
+            }
+
+            // Download remote roommates missing locally or update existing
+            for (remoteMem in remoteMembers) {
+                val isSelf = (remoteMem.id == currentUserId) ||
+                        (currentUserEmail.isNotBlank() && remoteMem.email.trim().lowercase() == currentUserEmail)
+
+                if (isSelf) {
+                    if (curUser != null && (curUser.name != remoteMem.name || curUser.upiId != remoteMem.upiId)) {
+                        dao.insertUser(curUser.copy(name = remoteMem.name, upiId = remoteMem.upiId))
+                    }
+                } else {
+                    val existing = localMemberMap[remoteMem.id]
+                    if (existing == null) {
+                        dao.insertUser(remoteMem.copy(isCurrentUser = false))
+                        totalDownloaded++
+                    } else if (existing.name != remoteMem.name || existing.upiId != remoteMem.upiId || existing.avatarColorHex != remoteMem.avatarColorHex) {
+                        dao.insertUser(remoteMem.copy(isCurrentUser = false))
+                    }
+                }
+            }
+
+            // Stage 2: Compare & Reconcile Expenses (35%)
+            onProgress("Checking & synchronizing expenses...", 35)
+            ChoreNotificationHelper.showSyncProgress(context, "RoomieVault Cloud Sync", "Matching expenses...", 35, 100)
+
+            val localExpenses = dao.getExpensesByHouseholdDirect(effectiveHid)
+            val remoteExpenses = dataStore.fetchRemoteExpenses(supabaseUrl, supabaseAnonKey, effectiveHid)
 
             val localExpMap = localExpenses.associateBy { it.id }
             val remoteExpMap = remoteExpenses.associateBy { it.id }
@@ -273,8 +342,8 @@ class SupabaseSyncManager(private val context: Context) {
             onProgress("Checking & synchronizing chores...", 55)
             ChoreNotificationHelper.showSyncProgress(context, "RoomieVault Cloud Sync", "Matching chore tasks...", 55, 100)
 
-            val localChores = dao.getAllChoresDirect(hid)
-            val remoteChores = dataStore.fetchRemoteChores(supabaseUrl, supabaseAnonKey, hid)
+            val localChores = dao.getAllChoresDirect(effectiveHid)
+            val remoteChores = dataStore.fetchRemoteChores(supabaseUrl, supabaseAnonKey, effectiveHid)
 
             val localChoreMap = localChores.associateBy { it.id }
             val remoteChoreMap = remoteChores.associateBy { it.id }
@@ -295,8 +364,8 @@ class SupabaseSyncManager(private val context: Context) {
             onProgress("Checking & synchronizing settlement debts...", 70)
             ChoreNotificationHelper.showSyncProgress(context, "RoomieVault Cloud Sync", "Matching debts & UPI settlements...", 70, 100)
 
-            val localDebts = dao.getSettlementDebtsDirect(hid)
-            val remoteDebts = dataStore.fetchRemoteDebts(supabaseUrl, supabaseAnonKey, hid)
+            val localDebts = dao.getSettlementDebtsDirect(effectiveHid)
+            val remoteDebts = dataStore.fetchRemoteDebts(supabaseUrl, supabaseAnonKey, effectiveHid)
 
             val localDebtMap = localDebts.associateBy { it.id }
             val remoteDebtMap = remoteDebts.associateBy { it.id }
@@ -315,8 +384,8 @@ class SupabaseSyncManager(private val context: Context) {
 
             // Stage 5: Compare & Reconcile Savings Goals (85%)
             onProgress("Checking & synchronizing savings goals...", 85)
-            val localSavings = dao.getSavingsGoalsDirect(hid)
-            val remoteSavings = dataStore.fetchRemoteSavingsGoals(supabaseUrl, supabaseAnonKey, hid)
+            val localSavings = dao.getSavingsGoalsDirect(effectiveHid)
+            val remoteSavings = dataStore.fetchRemoteSavingsGoals(supabaseUrl, supabaseAnonKey, effectiveHid)
 
             val localSavingsMap = localSavings.associateBy { it.id }
             val remoteSavingsMap = remoteSavings.associateBy { it.id }
@@ -332,8 +401,8 @@ class SupabaseSyncManager(private val context: Context) {
 
             // Stage 6: Compare & Reconcile Budget Configs (95%)
             onProgress("Checking & synchronizing monthly budgets...", 95)
-            val localBudgets = dao.getAllBudgetConfigsDirect(hid)
-            val remoteBudgets = dataStore.fetchRemoteBudgetConfigs(supabaseUrl, supabaseAnonKey, hid)
+            val localBudgets = dao.getAllBudgetConfigsDirect(effectiveHid)
+            val remoteBudgets = dataStore.fetchRemoteBudgetConfigs(supabaseUrl, supabaseAnonKey, effectiveHid)
 
             val localBudgetMap = localBudgets.associateBy { "${it.monthYearKey}_${it.householdId}" }
             val remoteBudgetMap = remoteBudgets.associateBy { "${it.monthYearKey}_${it.householdId}" }
